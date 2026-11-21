@@ -1,7 +1,7 @@
 # TryItOn 9.0.0 研究与独立实现边界
 
 ## 本地对象与身份
-扩展 ohfkhalfafkomanjkgghbdlcinhdpmko，版本9.0.0，目录 `C:\Users\l1234\AppData\Local\Google\Chrome\User Data\Default\Extensions\ohfkhalfafkomanjkgghbdlcinhdpmko\9.0.0_0`。
+扩展 ohfkhalfafkomanjkgghbdlcinhdpmko，版本 9.0.0，位于本机 Chrome 用户数据目录下的 `<user-data>\Default\Extensions\ohfkhalfafkomanjkgghbdlcinhdpmko\9.0.0_0`。
 
 本轮直接读取 assets/main-D-b9QqDh.js 静态字节：932303 bytes，932186 Python Unicode codepoints，SHA256 `5608fd0a93d376454cf87a778871febb13dabdd47ca2f7e43fa335828f2ad26d`，末次复核一致。以下 char offset 是零起始 Python Unicode codepoint，byte offset 为零起始 UTF-8 字节，非 JS UTF-16。
 
