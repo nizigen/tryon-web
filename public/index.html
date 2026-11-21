@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>试衣间 · TryOn Studio</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">跳到试衣工作台</a>
+  <header class="topbar">
+    <a class="brand" href="/">试衣间 <span>TRYON STUDIO</span></a>
+    <nav aria-label="主导航"><a href="/#workspace" aria-current="page">试衣工作台</a><a href="/#history">最近记录</a></nav>
+  </header>
+  <main class="page">
+    <div class="intro"><div><p class="eyebrow">一张照片，一种新搭配</p><h1>选好照片，看看新的搭配。</h1><p>准备人物与服装，在右侧查看真实试穿结果。</p></div><span class="badge">本地工作台</span></div>
+    <div class="workspace" id="workspace">
+      <form id="tryon-form" class="panel controls" novalidate>
+        <div class="input-scroll">
+        <fieldset id="input-fields">
+          <legend class="sr-only">准备试穿素材与设置</legend>
+          <section class="source-section" aria-labelledby="person-heading">
+            <div class="section-head"><span class="step-count" aria-hidden="true">1</span><h2 id="person-heading">人物照片</h2><small>必需素材</small></div>
+            <label class="upload" id="person-drop" for="person-file">
+              <span class="upload-icon" aria-hidden="true">↑</span><strong id="person-action">上传人物照片</strong><span class="upload-hint">正面站立、光线均匀，身体完整入镜</span>
+              <img id="person-preview" alt="待提交的人物照片预览" hidden>
+              <input id="person-file" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="file-help person-info person-error">
+            </label>
+            <p class="file-info" id="person-info">点击选择或拖放图片</p><p class="field-error" id="person-error" aria-live="polite"></p>
+          </section>
+          <section class="source-section" aria-labelledby="garment-heading">
+            <div class="section-head"><span class="step-count" aria-hidden="true">2</span><h2 id="garment-heading">服装参考图</h2><small>单件衣物</small></div>
+            <label class="upload" id="garment-drop" for="garment-file">
+              <span class="upload-icon" aria-hidden="true">↑</span><strong id="garment-action">上传服装参考图</strong><span class="upload-hint">清晰平铺图或正面商品图，背景干净</span>
+              <img id="garment-preview" alt="待提交的服装参考图预览" hidden>
+              <input id="garment-file" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="file-help garment-info garment-error">
+            </label>
+            <p class="file-info" id="garment-info">点击选择或拖放图片</p><p class="field-error" id="garment-error" aria-live="polite"></p>
+            <p class="small muted" id="file-help">JPEG / PNG / WebP · 每张不超过 8 MiB</p>
+          </section>
+          <section class="settings" aria-labelledby="settings-heading">
+            <div class="section-head"><span class="step-count" aria-hidden="true">3</span><h2 id="settings-heading">试穿设置</h2></div>
+            <fieldset class="category-field"><legend>服装类别</legend><div class="pills"><label><input type="radio" name="category" value="tops" checked><span>上衣</span></label><label><input type="radio" name="category" value="bottoms"><span>下装</span></label><label><input type="radio" name="category" value="dresses"><span>连衣裙</span></label></div></fieldset>
+            <div class="field"><label for="engine">图片模型</label><select id="engine" aria-describedby="config-status"><option value="">正在加载配置…</option></select><p class="small muted" id="engine-detail"></p></div>
+            <div class="config-box"><p id="config-status" role="status">正在读取 the image service 图片模型…</p><button type="button" id="reload-config" class="text-button">重新加载配置</button></div>
+            <div class="field prompt-field"><label for="prompt">补充要求 <span class="muted">（可选）</span></label><textarea id="prompt" rows="2" placeholder="例如：保持原来的姿势与背景" aria-describedby="prompt-count prompt-error"></textarea><p id="prompt-count" class="small muted">0 / 2000 字符</p><p id="prompt-error" class="field-error" aria-live="polite"></p></div>
+          </section>
+        </fieldset>
+        </div>
+        <div class="generate-actions">
+            <button class="primary" id="generate" type="submit" disabled>生成试穿图 <span aria-hidden="true">→</span></button>
+            <p id="ready-status" class="small muted">先准备两张照片与可用引擎。</p>
+            <p class="privacy">预览留在本机；点击生成会把两张图片发送到所选服务，可能产生费用。记录仅在本页内存中，刷新即清空。</p>
+        </div>
+      </form>
+      <section class="panel result-panel" aria-labelledby="result-heading" id="result-panel">
+        <div class="result-top"><div><p class="eyebrow">试穿预览</p><h2 id="result-heading">你的下一种搭配</h2></div><button id="download" type="button" disabled>下载图片 <span aria-hidden="true">↓</span></button></div>
+        <div class="view-switch" role="group" aria-label="结果查看方式"><button type="button" data-view="original" aria-pressed="false" disabled>原图</button><button type="button" data-view="result" aria-pressed="true" disabled>试穿</button><button type="button" data-view="split" aria-pressed="false" disabled>并排对比</button></div>
+        <div class="canvas" id="canvas" data-view="result" aria-busy="false">
+          <div class="empty-state" id="empty-result"><span class="empty-symbol" aria-hidden="true">＋</span><h3>新搭配，从两张照片开始</h3><p>上传人物和服装，选择引擎后生成。<br>结果会在这里完整展示。</p><div class="empty-steps" aria-hidden="true"><span>人物照片</span><i>＋</i><span>服装参考图</span><i>→</i><span>试穿结果</span></div></div>
+          <figure class="result-frame original-frame" hidden><img id="result-original" alt="本次生成使用的人物原图"><figcaption>人物原图</figcaption></figure>
+          <figure class="result-frame output-frame" hidden><img id="result-image" alt="生成的服装试穿结果"><figcaption>试穿结果</figcaption></figure>
+          <div class="loading-overlay" id="loading" hidden><span class="spinner" aria-hidden="true"></span><strong>正在生成，请稍候</strong><p>正在等待所选服务返回图片，请保持页面打开。</p></div>
+        </div>
+        <div class="result-bottom"><p id="result-meta">等待第一次试穿</p><span class="small muted">图片完整显示 · 不裁切</span></div>
+        <p id="generation-status" class="generation-status" role="status" aria-live="polite" aria-atomic="true">准备好后，点击左侧“生成试穿图”。</p>
+      </section>
+    </div>
+    <section class="history" id="history" aria-labelledby="history-heading"><div class="history-head"><div><h2 id="history-heading">最近试穿</h2><p class="small muted">仅保留本页最近 10 次成功记录，查看记录不会改变待提交素材。</p></div><span id="history-count" class="badge">0 / 10</span></div><p id="history-empty" class="history-empty">还没有试穿记录。完成第一次生成后，可以在这里回看。</p><div class="history-list" id="history-list"></div></section>
+    <footer>TRYON STUDIO <span>效果由所选服务生成，仅作搭配参考。</span></footer>
+  </main>
+</body>
+</html>
