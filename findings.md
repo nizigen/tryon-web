@@ -1,44 +1,88 @@
-# Findings — 当前决策与证据边界
+# findings — 研究、决策与证据
 
-## 当前范围替代旧方案
-本轮按主代理传达的用户范围改为 the image service 图片 MCP 自动发现，取代旧 Decart/OpenAI 直接API及 DECART/OPENAI 环境密钥约定。保持用户已选 C 分步试衣台、Node v24.17.0/原生Web、仅127.0.0.1:43130、tops/bottoms/dresses、十条页面内存历史。无新依赖/安装/部署。旧双引擎15项测试属历史，不能证明本轮代码。
+## 1. 平台形态：抖音小程序 + H5，不做原生 App（决策：2025-11-22）
 
-## 复用/适配选择
-复用现有server.mjs中的decodeImage、readUpstream、deadline/abortable、HTTP边界与Node测试面。工具schema明确已有generate_image、generation_result及模型enum；只写薄MCP适配，避免应用重复管理提供方凭据、原生协议和静态模型目录。无需SDK、框架、数据库或独立任务队列，无第三方代码复制/许可证引入。数据归属：浏览器拥有输入/快照/十条历史，本地API校验与编排，the image service持有凭据并调用所选提供方，提供方决定输出与计费。the image service自身产物可能落盘，不等于应用建立照片库。
+**依据（已核实来源）**
 
-## 本轮直接核实
-文档代理只读server.mjs（同步期间仍由另一代理修改），观察到：
+- 抖音开放平台《小程序 iOS 虚拟支付规范》：小程序内提供"功能解锁、订阅内容、付费功能"等非实物虚拟服务，购买与支付须接入小程序虚拟支付（含苹果支付/钻石支付）；非平台渠道交易或引导用户前往其他渠道支付均属违规。
+  来源：https://developer.open-douyin.com/docs/resource/zh-CN/mini-app/operation/management/specification/ios-virtual-payment
+- 国家网信办等四部门《人工智能生成合成内容标识办法》（2025-03-14 印发）：AI 生成图片属"生成合成内容"，服务提供者须做显式标识与隐式标识。
+  来源：http://www.cac.gov.cn/2025-03/14/c_1743654684782215.htm
+- 本机 the image service `tools/list` 实测模型目录（2025-11-22）：`codex/gpt-image-2`、`workbuddy/hunyuan-image-alpha`、`workbuddy-ai/hy-image-3.5`、`minimax-code/MiniMax-Image`；`generate_image` 支持 `quality`(low/medium/high/xhigh/max)、`complexity`、`size`、`reference_images`。
 
-- listModels从tools/list的generate_image.inputSchema.properties.model.enum读取；getConfig输出engines/defaultEngine/gateway状态，友好名不是模型白名单。
-- generateWithSignal先校验model/person/garment/category/prompt，再重新发现并校验模型；generate_image参数reference_images=[person,garment]，均保留data URL。
-- 异步读取result._meta?.['image-service.local/pending']，轮询generation_result({id})，共享时限，不重新生成。
-- buildPrompt三分类保留规则和服装自然轮廓约束已可见；这是自建提示词，不是恢复原服务端模板。
-- 首次读取时gatewayEndpoint仍只有显式地址/固定默认；收尾复读已观察实现代理更新：显式IMAGE_API_BASE_URL优先，否则每次读homedir()/.config/the image service/gateway.json的addr（127.0.0.1:端口）；仅ENOENT回退3425，畸形/其他读取错误安全失败，路径默认/v1/images。已通知主代理；这是源码观察，最终测试/运行待验。
+**推论**
 
-本轮再次通过the image service工具发现读取live schema（未生成）：codex/gpt-image-2、workbuddy/hunyuan-image-alpha、workbuddy-ai/hy-image-3.5、minimax-code/MiniMax-Image；schema的reference_images描述为路径/URL。data URL支持以主代理实际双参考成功为依据，不声称每模型通用。
+- 流量在抖音：用户从视频/直播/商品页进入，短视频与直播挂载小程序是原生链路，无需下载安装，转化摩擦最低；橱窗（抖音小店）负责实物售卖，小程序负责付费试穿这种虚拟服务，两者分工与平台规则一致。
+- 原生 App 在此场景无优势：需要 App 备案、应用商店上架、软著、支付通道、生成式 AI 与深度合成备案、版本审核，且抖音生态内 App 导流路径更差；虚拟支付在 iOS 端本来就受平台虚拟支付规则约束，App 并不能绕开。
+- 结论：v1 做**抖音小程序（主）+ 移动优先 H5（PC 与其它入口）**，不做 App。本仓库实现 H5 与后端 API，小程序侧直接复用同一套 REST 接口（登录与支付留桩）。
 
-## 真实生成与页面证据（主代理报告，未由文档代理重跑）
-| 场景 | 观察 | 边界 |
-| --- | --- | --- |
-| GPT Image 2 苹果 | 生成成功 | 文生图基本连通，不等于全试穿验收 |
-| GPT Image 2 双参考上装 | 红花衬衫替换成功，牛仔裤/白鞋/人物/背景视觉保留 | 语义视觉判断，非像素保证；其他分类未验 |
-| MiniMax 苹果 | 502失败 | 不宣称全模型可用，不静默切换 |
-| 两混元模型 | 已出现在enum | 真实生成未验 |
-| OpenCLI设计页 | 前序1440/375px截图、引擎切换有观察 | 旧设计页不等于最终新UI |
-| 最终上传/点击 | 上传Not allowed；原生点击受minimized影响 | 最终新UI上传到结果/下载/历史链仍缺验证 |
-| 单测 | 旧实现15项通过 | 最终node --test待主代理执行 |
+**未验证**
 
-## 扩展研究纠正与持久证据
-本轮直接读取原主bundle，SHA256 5608fd0a93d376454cf87a778871febb13dabdd47ca2f7e43fa335828f2ad26d、932303 bytes。真正试穿分类为UC/VF（char542300/byte542315）：auto；clothing→auto/tops/bottoms/dresses；eyewear、footwear、headwear；jewelry、accessories及各子项。others被过滤。const mv（char627750）是商品筛选taxonomy，不是试穿选区；不可据shirts/jeans等细项扩展范围。完整原分类、选择器状态和提交偏移见REA_REPORT.md。
+- 抖音虚拟支付具体费率、结算周期、小程序类目与资质清单：需以开放平台实际政策与账号状态为准，本轮未取得公开明确数值，不写进定价假设。
+- 橱窗商品详情页/直播间挂载小程序的具体配置路径：未验证。设计上不依赖该跳转——小程序内自带橱窗目录，商品 ID 可由外部带入。
 
-静态图片/tryon/clothes（char668404/byte668457）只在该提交体中传category与可选subcategory、人物photoId、服装file等，没传prompt/mask；全文有93处prompt字面，SDK/直播链路明确读取garment.prompt/referenceImage/enhancePrompt。没有恢复原后台模板或分割策略。
+## 2. 定价（决策：2025-11-22）
 
-前序REA主bundle30秒partial ev_b4e1e223d42cd7ce7ec0a42db0b6ae6d6c1d188474c7ed3c594a76794b555609；background/image-picker聚焦partial ev_b44c81b86f76ca5ced87da8ab34baf73e76e3cec5fc9cb47fdb9172ab50f6e57（2JS/1818AST/14未选文件/537未知）。本轮指定90秒预算/2000nodes/1000unknowns单次重试被宿主50秒截止，无新Evidence ID；停止重试。本轮分类结论来自本地静态补证，非REA图谱。原扩展运行画面/后端模型仍未知，不复制私有资产。
+**成本基线（公开价，2025-11 观测）**
 
-## 历史与审阅归属
-前序零依赖双引擎方案查过Decart Lucy Image 2官方文档并完成旧HTTP/资源边界测试；该事实保留为旧路线背景，不再定义当前配置。最初server在最终规范审阅前实现且契约不符的偏差，曾由主代理承认并按旧最终契约修正；不把初始5项或后续15项旧测试冒充本轮验收。用户视觉选择C已记录direction-approved.md。
+- OpenAI 定价页：`gpt-image-2` 输出 $30 / 1M image tokens，批量 $15 / 1M；`gpt-image-1-mini` 输出 $8 / 1M。
+  来源：https://platform.openai.com/docs/pricing
+- MiniMax 定价页：图片编辑（1 参考图，1K）¥0.2978/张，3 参考图 1K ¥0.3982/张；历史 `image-01` ¥0.025/张。
+  来源：https://platform.minimaxi.com/document/price
+- 混元两个模型（workbuddy/*）未取得公开单价，按 ¥0.40 保守估算并在代码中标注待核。
 
-上述文档同步阶段的待验状态已由主代理继续核实：六规范重新逐份审阅，与 the image service 最终实现一致；主代理与独立后端评审分别执行22项测试，全部通过。server SHA256 为7859AB9BE0411785CB15F8A58029BD0C4C3B8C357D36F455F4D2727EDBA0D099，test SHA256 为A2FB96F39FE951FAB37155A18DF11A3056F175017CDD59BEEBA2BC19EA8A9503。独立评审发现的路径规范化/异步终态两项P2已修复并有回归。
+**折算**：gpt-image-2 medium 1024² 约 4096 image tokens ≈ $0.123 ≈ ¥0.9；high 档 token 数更高，按 ¥3.5 估算。
 
-## 最终运行验收进行中
-主代理重启同一43130服务，实际/api/config返回四模型与默认codex/gpt-image-2、gateway.reachable=true，证明网关文件自动发现和新后端加载成功。OpenCLI实际页面显示四模型选择项及正确默认。前端三项评审问题（fieldset滚动、字段错误关联、busy覆盖live区）已修，正在聚焦复审和响应式截图；三分类真实API生成使用合成素材进行中，不读取私人照片，不自动重试或切换模型。Chrome原生输入仍报可见窗口限制，实际上传/点击/下载流程不能用截图或API结果冒充。文档子代理不启动服务/提交的限制仅是其子任务边界，不限制主任务正常本地验收与最终提交。
+**零售价（单次，分）**：MiniMax 190 / 混元 Alpha 290 / 混元 3.5 390 / GPT Image 2 standard 690 / GPT Image 2 premium 1390；充值包 ¥1.9×1、¥9.9×5、¥29.9×15。
+
+**理由**：快档价格贴近"顺手试一件"的心理门槛（≤¥2），精档 ¥6.9 覆盖 ¥0.9 成本仍有量级利润，尊档覆盖 high 档成本。价格表集中在 `src/pricing.mjs`，改价不需改逻辑。
+
+**未知**：抖音虚拟支付抽成比例未取得，会直接影响净收入；模型实际账单口径（订阅额度 vs API 计费）在本机无法核对，因此零售价按 API 等价成本定价，保守。
+
+## 3. 提示词：残留衣物与"AI 味"（实证：2025-11-22）
+
+**问题**：原扩展在实操中会出现"衣服替换不到位、原衣服留一半"；生成结果偏 AI 味（光影、褶皱不真实）。原扩展服务端模板不可得（见 REA_REPORT.md，本项目自建提示词）。
+
+**实验**：用 the image service `codex/gpt-image-2`（quality=medium, size=1024x1536）以同一组合成素材（人物：白 T 恤 + 牛仔裤 + 白鞋；服装：红底白色小花短袖衬衫平铺图）对比三版提示词：
+
+- V0 = 仓库现有 `buildPrompt`；
+- V1 = 结构化分节（任务/输入角色、保留项、完全替换与去残影、服装保真、光影与褶皱自然、严格约束）；
+- V2 = V1 + 禁止合成感（不贴图、边缘不规则、颗粒与色彩一致）与输出前自检条款。
+
+**观察**：三版在该样例上都完成了整件替换，无白色残影；V2 的衣服轮廓更贴合腰身、花纹尺度更接近商品图、整体更像同一张照片里拍的而不是贴上去的。结构化提示词对"换装完整度"和"去 AI 味"的正向作用是明确的，且 V2 优于 V0/V1。
+
+**落地**：生产提示词采用 V2 结构，并按服装子类替换"替换区域/保留项"段落；把商品标题作为服装描述写进提示词，提升印花与版型还原；用户补充要求单独成段且声明不得覆盖区域与身份规则。
+
+**真实链路复验（2025-11-22，本机网关 gpt-image-2 / medium / 1024x1536）**：用同一组合成人物跑通三个分类并逐张人工查看：
+
+| 分类 | 服装 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| tops | 红底白色小花短袖衬衫 | 白 T 恤完全消失，花纹与领型还原，人物/牛仔裤/白鞋/背景保持 | docs/evidence/ui-result-390.png、ui-result-1440.png |
+| bottoms | 黑色高腰直筒牛仔裤 | 蓝牛仔裤被完整替换，腰头与口袋结构自然，白 T 恤与白鞋保持 | docs/evidence/tryon-bottoms.jpg |
+| dresses | 黑色吊带缎面连衣裙 | 上下装同时被一条裙子替换，鞋、发型、皮肤与背景保持 | docs/evidence/tryon-dresses.jpg |
+
+对照实验图：docs/evidence/prompt-lab-v0.jpg（旧提示词）、prompt-lab-v1.jpg（结构化）、prompt-lab-v2.jpg（结构化 + 禁合成感），生产采用 V2 结构。
+
+**未验证**：V0/V1/V2 的差异仅由一次三图对比得出，未做盲评或多次重复；样本为合成素材，未覆盖真实用户照片（逆光、侧身、多人同框）；"外套保留内搭"等子类语义尚未生成验证；隐式标识（文件元数据）未实现。
+
+## 4. 区域热点叠加（对标原扩展的 hover 显示服装）
+
+原扩展的"鼠标移到人物身上就显示对应服装"在网页形态下等价于：**人物照与结果图共用一套身体区域热区（上身/下身/全身），悬停或点击热区即在该区域叠加当前服装图**。这是显示层能力，不需要模型支持，也不产生额外计费。
+
+## 5. 现有实现的可复用与需改造
+
+- 可复用：the image service 网关发现与 `generate_image` + pending 轮询、base64/MIME/magic 校验、限额与超时、Host/Origin 与 CSP、node --test 断言风格。
+- 需改造：`server.mjs` 单文件（~400 行）要承载商品/定价/订单/会话，必须按模块拆分；`buildPrompt` 升级为分类 + 子类驱动的结构化提示词；前端从"表单工作台"改为"橱窗 + 试穿 + 结果"的产品结构，并去掉演示感文案与占位布局。
+- 保持：零依赖、不安装、不部署、仅本机运行与真实上游验证。
+
+## 6. 区域热点的真实交互（复验）
+
+- 桌面端 hover、移动端 click 命中上身/下身/全身热区时，在该区域叠加显示当前商品图（不触发新的生成，也不产生费用）。
+- 修正过一次真实缺陷：初版对所有分类都开放三个热区，导致上衣商品在下半身也叠加出上衣；现按商品分类限制热区（上衣→上身/全身，下装→下身/全身，连衣裙→全部）。
+- 证据：docs/evidence/ui-hotspot-390.png、ui-hotspot-lower-390.png。
+
+## 7. 支付与身份的边界
+
+- 本轮充值为本地模拟（POST /api/payments + /confirm），真实支付未接入：抖音小程序虚拟支付需要主体资质与 AppID，且虚拟服务支付必须走平台虚拟支付能力，不得引导站外支付。
+- 会话为本地设备标识派生的匿名会话，不是真实鉴权；对外署形态必须换成抖音/微信登录（code2session → openid）并把订单归属绑定到平台用户。
+- 这两项是"能收钱"之前的硬前置，已写入 PRD 非目标与 BACKEND_STRUCTURE.md 的未验证说明。

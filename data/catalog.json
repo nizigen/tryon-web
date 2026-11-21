@@ -1,0 +1,70 @@
+{
+  "products": [
+    {
+      "id": "shirt-floral",
+      "name": "红底白色小花短袖衬衫",
+      "subtitle": "棉质府绸，宽松短袖，通勤度假都好搭",
+      "image": "catalog/shirt-floral.jpg",
+      "priceCents": 8900,
+      "category": "tops",
+      "garmentType": "shirt",
+      "tags": ["衬衫", "红色", "碎花", "短袖"],
+      "shopLink": null
+    },
+    {
+      "id": "jeans-black",
+      "name": "黑色高腰直筒牛仔裤",
+      "subtitle": "厚磅牛仔，显瘦直筒，不挑腿型",
+      "image": "catalog/jeans-black.jpg",
+      "priceCents": 12900,
+      "category": "bottoms",
+      "garmentType": "jeans",
+      "tags": ["牛仔裤", "黑色", "高腰", "直筒"],
+      "shopLink": null
+    },
+    {
+      "id": "sweater-knit",
+      "name": "米色麻花针织毛衣",
+      "subtitle": "粗棒针柔软蓬松，秋冬内搭外穿都合适",
+      "image": "catalog/sweater-knit.jpg",
+      "priceCents": 15900,
+      "category": "tops",
+      "garmentType": "sweater",
+      "tags": ["毛衣", "米色", "针织", "秋冬"],
+      "shopLink": null
+    },
+    {
+      "id": "dress-slip",
+      "name": "黑色吊带缎面连衣裙",
+      "subtitle": "细肩带中长款，垂坠缎面，显瘦",
+      "image": "catalog/dress-slip.jpg",
+      "priceCents": 19900,
+      "category": "dresses",
+      "garmentType": "dress",
+      "tags": ["连衣裙", "黑色", "缎面", "吊带"],
+      "shopLink": null
+    },
+    {
+      "id": "blouse-linen",
+      "name": "白色亚麻小翻领衬衫",
+      "subtitle": "天然亚麻，透气微皱，清爽通勤",
+      "image": "catalog/blouse-linen.jpg",
+      "priceCents": 9900,
+      "category": "tops",
+      "garmentType": "blouse",
+      "tags": ["衬衫", "白色", "亚麻", "翻领"],
+      "shopLink": null
+    },
+    {
+      "id": "skirt-pleated",
+      "name": "灰色百褶中长半身裙",
+      "subtitle": "免烫定型褶皱，行走有摆动",
+      "image": "catalog/skirt-pleated.jpg",
+      "priceCents": 7900,
+      "category": "bottoms",
+      "garmentType": "skirt",
+      "tags": ["半身裙", "灰色", "百褶", "中长"],
+      "shopLink": null
+    }
+  ]
+}

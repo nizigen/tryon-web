@@ -1,37 +1,62 @@
-# Progress — 2026-11-21
+# progress — 会话日志（操作、变更、验证、错误）
 
-## 当前状态
-用户已选 C 分步试衣台。the image service 动态图片模型范围已取代旧 Decart/OpenAI 直接适配与密钥配置；只支持 tops/bottoms/dresses。主代理已完成六规范与最终源码审阅、新鲜测试、真实网关运行、三分类真实生成、桌面/平板/手机页面核验与最后视觉收尾；剩余为提交。
+## 2025-11-22 · v2 改造：从本地工作台到付费试穿产品
 
-## 原扩展研究
-- 加载 canonical reverse-engineer-anything metadata49；按 source_paths=['assets/main-D-b9QqDh.js']、nodes/file2000、unknowns/file1000、analysis_timeout_ms90000、summary 做一次变更重试。
-- MCP 宿主 50 秒报错未回答，无新 Evidence ID/coverage；未重试，不声称 REA 成功或后台已停止。
-- 本地静态提取：主 bundle 932303 bytes，SHA256 5608fd0a93d376454cf87a778871febb13dabdd47ca2f7e43fa335828f2ad26d；只读原扩展，不运行、不网络调用。
-- 纠正 mv 为商品过滤 taxonomy；真正 h6→UC/VF 分类、S/C 状态→/tryon/clothes 字段已追踪。静态提交体没有 prompt/mask，但全文 SDK/直播存在 prompt 字段，实际服务端模板未知。
-- 核心 SHA、偏移、完整原分类、REA 错误/旧 Evidence 与 unknown 见 REA_REPORT.md，不以 ignored artifacts 为唯一来源。
+### 输入与决策
+- 用户诉求：把 GitHub 上的 tryon-web（照 Chrome TryItOn 扩展实现）拉到本机；补充服饰选项与提示词，解决"衣服替换不到位、原衣留一半"与"AI 味光影褶皱"；补齐插件式的"鼠标移到身体就显示对应服装"；做抖音穿搭号的橱窗选衣 + 付费试穿；前端去 Demo 味；平台形态（抖音小程序 vs App）由我调研决定；定价由我按模型成本决定。
+- 仓库已克隆到 `/root/pi-work/tryon-web`（原仓库在 `C:\GitHub\tryon-web`，本机为 Linux 容器副本）。
+- 平台决策与定价依据见 findings.md 第 1、2 节。
 
-## the image service 契约与实现
-- live tools/list 的 generate_image.model.enum 四项：codex/gpt-image-2、workbuddy/hunyuan-image-alpha、workbuddy-ai/hy-image-3.5、minimax-code/MiniMax-Image。
-- 网关地址：IMAGE_API_BASE_URL 优先，否则读 the configured API base URL 的 addr；仅 ENOENT 回退 3425，畸形/读取失败安全失败。
-- generate_image 传 model、prompt、reference_images=[人物 dataURL, 服装 dataURL]；_meta['image-service.local/pending'] 转 generation_result 同 id 轮询，不重提、不切模型。
-- 独立评审发现并修复两项 P2：MCP 路径规范化可出站远程地址（现解析后仍须与已验证回环地址同源）；异步终态沿用上一 taskId 导致误报超时（现每轮仅取当前 pending，无图/错误立即失败并释放槽位）。
-- 前端独立评审三项 P2 已修：普通 div 承担滚动、字段错误白名单映射并 aria-invalid、aria-busy 移到画布使 live 状态可播报。
+### 变更
+- 后端按模块拆分：`server.mjs`（入口）+ `src/{app,store,tryon,pricing,prompt,the image service,validate,errors}.mjs`。
+- 提示词：结构化分节 + 服装子类（tops 7 类 / bottoms 4 类 / dresses 1 类），外套类走"替换外层、保留内搭"语义；商品标题进入提示词。
+- 新增商品目录（`data/catalog.json`，6 件商品，商品图为 AI 生成并在界面标注）、按模型 × 档位定价（`src/pricing.mjs`）、会话/订单/充值单 JSON 持久化（`data/state.json`，原子写）、异步试穿任务（下单冻结额度 → 生成 → 成功扣减 / 失败退回）。
+- 前端重做：橱窗（商品网格 + 分类筛选 + 搜索）→ 试穿页（模型/档位/上传/版型/补充要求）→ 结果页（原图对比、区域热点叠加、下载带 AI 标识）→ 我的（余额、充值、订单历史）。移动优先，底部固定 CTA。
+- 文档：六份规范（PRD / APP_FLOW / TECH_STACK / FRONTEND_GUIDELINES / BACKEND_STRUCTURE / IMPLEMENTATION_PLAN）按 v2 重写；`design/` 预览移入 `public/design/`（仍可访问）。
+- 测试：删除旧的 `test/server.test.mjs`，新增 `test/{api,pricing,prompt,store}.test.mjs`，共 39 项。
 
-## 最终验证证据（主代理直接执行）
-- Node v24.17.0；node --check server.mjs / public/app.js 通过；node --test 22/22 pass、0 fail、4276.284 ms（视觉收尾后复跑）。独立后端评审另行执行 22/22 pass。
-- 最终哈希：server.mjs 7859AB9BE0411785CB15F8A58029BD0C4C3B8C357D36F455F4D2727EDBA0D099；test/server.test.mjs A2FB96F39FE951FAB37155A18DF11A3056F175017CDD59BEEBA2BC19EA8A9503；public/index.html 8E0D2D3F265C5E310B8618034B4D5349226B6C61CD30BC80779CFB30EC691A7C；public/app.js 7CCE124D50098A4344BD5713B9D8C61FBF133E2ED7C4E7480A9B2CA6BC926052；public/style.css 1EFE24253011E20ACF0058AED48FD203F203FA50229114B6F44A64EEA23B9F66。
-- 重启同一 127.0.0.1:43130 后，/api/config 真实返回四模型、defaultEngine=codex/gpt-image-2、gateway.reachable=true。
-- 正式 /api/tryon 用合成人物 + 三件服装分别生成：tops 37.5s/1837KB、bottoms 19.9s/1710KB、dresses 31.9s/1700KB，全部成功；逐张查看确认本次样例按区域替换，人物/非目标衣物/白鞋/背景视觉语义保留。
-- 对照图 docs/evidence/tryon-comparison.png（SHA256 276667D156CD935D13871FC9741E1E0E980E000D7C56BC1DD8C6D33A2D8B8D89）；原始结果与截图保留在被忽略的 artifacts/ 研究目录。
+### 验证（真实执行）
+- `node --test` → 39/39 通过（含扣费、失败退额、并发 409、pending 轮询、跨站拒绝、目录穿越拒绝）。
+- 本机 the image service 真实生成（gpt-image-2 / medium / 1024x1536）：
+  - tops（红花衬衫）→ 整件替换，无白色残影，证据 `docs/evidence/ui-result-390.png`、`ui-result-1440.png`；
+  - bottoms（黑牛仔裤）→ 下装完整替换，证据 `docs/evidence/tryon-bottoms.jpg`；
+  - dresses（黑缎面吊带裙）→ 上下装同时替换、保留鞋，证据 `docs/evidence/tryon-dresses.jpg`；
+  - 提示词对照实验 `docs/evidence/prompt-lab-v0/v1/v2.jpg`。
+- 页面真实交互（Chromium headless + CDP 驱动，容器内）：390/768/1440 三档均无横向溢出；上传人物照 → 提交 → 排队 → 生成 → 结果图加载 → 悬停/点击热区叠加服装图 → 下载按钮 → "我的"订单记录，均实测通过，截图见 `docs/evidence/ui-*.png`。
+- 真实 HTTP：/api/config 返回 4 个模型与定价；/api/products 返回 6 件商品；下单扣费 ¥6.90 → 余额 ¥0；失败场景由自动化测试覆盖（退费）。
 
-## 浏览器与未验范围
-- OpenCLI 真实页面（1707×876）：四模型选项与默认选择正确，切换混元 3.5 成功；1707 下 generateTop 658.74/bottom 709.67 完整首屏；滚动归属为普通 DIV（client 414 / total 900 / overflow auto）；canvas busy=false、panel busy=null、状态行在画布外。
-- 截图：artifacts/final-1440.png、final-768.png、final-375.png 为第一轮；视觉收尾后重拍 artifacts/v4-1440.png、v4-768.png、v4-375.png。收尾内容：结果面板改为纵向 flex、高度 calc(100dvh - 250px)（上限 780px），画布 flex 填充，状态行随面板进入首屏；左卡滚动区底部留白，第 3 步标题不再被切。实测 1707×876 下状态行 bottom 840、生成按钮 bottom 713；768×1024 下状态行 bottom 994、画布 496px；375×900 无横向溢出（scrollWidth 360）。
-- OpenCLI 文件上传仍返回 {"code":-32000,"message":"Not allowed"}，原生输入受可见窗口限制；因此浏览器内上传→生成→对比/下载/历史与屏幕阅读器播报仍为未自动验证，不以 API 结果或截图冒充。
-- 未验证：两混元模型与其他服装样本的真实生成质量；MiniMax 苹果请求历史 502。不为补齐矩阵自动付费探测。
-- 没有安装依赖、部署或更换浏览器驱动；未读取或输出提供方凭据。
+### 独立评审与修复（2025-11-22）
 
-## 历史基线（不能替代本轮验收）
-- 原 REA 30 秒主 bundle partial ev_b4e1e223d42cd7ce7ec0a42db0b6ae6d6c1d188474c7ed3c594a76794b555609；background/image-picker 聚焦 partial ev_b44c81b86f76ca5ced87da8ab34baf73e76e3cec5fc9cb47fdb9172ab50f6e57。
-- 旧 Decart/OpenAI 双引擎 15 项测试及最初 5 项仅为旧路线证据，不能套用 the image service 改动；旧运行 job/配置响应属于旧实例快照。
-- 用户 C 选择记录在 direction-approved.md；chrome-extension:// 导航被 OpenCLI HTTP-only 拒绝，无原插件运行截图，不声称像素复刻。
+由独立评审代理（只读，不改代码）复核最终实现，报出 3 个 P0、5 个 P1 与 18 个 P2。已修：
+
+| 编号 | 问题 | 处理 |
+| --- | --- | --- |
+| P0-1 | 人像 base64 落盘到 `data/state.json` | 订单不再保存人物图/服装图，改为随任务只在内存中流转；`data/state.json` 与 `data/results/` 加入 .gitignore；新增断言"落盘文件不含 base64" |
+| P0-2 | 扣费与入队之间的 TOCTOU：409 会吞掉余额并留下永久 pending 订单 | 先占位（`tryon.reserve`）再扣费建单，占位后任何异常都释放占位并全额退款 |
+| P0-3 | 进程重启后 pending 订单永久漏退 | 启动时 `reconcileInterruptedOrders()` 把 pending 订单置为 failed 并退款；订单记录 jobId |
+| P1-1 | 目录商品图以本机绝对路径下发且绕过图片校验 | 服务端读盘并转成已校验的 data URL，与上传路径同一套校验 |
+| P1-2 | 非法档位静默回落到首档（扣费与展示价可能不一致） | 非法档位直接 400；新增 API 层用例 |
+| P1-3 | "全身"热区盖住上身/下身，移动端点不到 | 热区按 z-index 分层，上身/下身在上；补 `aria-pressed` 同步 |
+| P1-4 | `/api/tryon` 不计量、会话可无限注册领额度 | 部署形态（设置 `PUBLIC_ORIGIN`）默认关闭直连与模拟充值，需显式开关 |
+| P1-5 | 模拟充值无闸门 | 同上；充值幂等已有测试覆盖 |
+| P2 | 提示词语法错误（"The the ..."）、目录文案注入面、外套语义冲突、提示词字数不一致、CSP 拦内联样式、套餐文案、刷新丢任务、写盘错误静默、任务表不清理、TTL 不改订单、limit 参数、文档与实现不一致、结果 URL 带会话标识 | 逐条修复：提示词去冠词、商品文案单行化限长并加引号、外套改条件式表述、补充要求统一 500 字、骨架改用 class、套餐按最低档折算、进入试穿页接管未完成订单、写盘失败落日志、任务终态 30 分钟清理、TTL 同步把订单置 expired、`limit` 参数透传、文档按实现回填、结果图改为带时效的 HMAC 票据 |
+
+修复后：`node --test` 46/46 通过（含新增的"落盘无 base64""目录图 data URL""结果票据""重启对账""非法档位"用例）。
+
+### 环境说明
+- 本容器为 Linux，无 Chrome/预装浏览器；为做真实 UI 验证，在容器内安装了系统包 `chromium`（EPEL），仅用于本次验证，不是项目依赖，仓库未记录任何 Chromium 相关依赖。
+
+### 未验证 / 已知缺口
+- 真实支付（抖音虚拟支付）与真实登录未接入，当前充值为本地模拟，会话为匿名设备标识。
+- 隐式 AI 标识（图片元数据）未实现；界面与导出文件名有显式标识。
+- 混元两个模型与 MiniMax 未做真实生成验证；价格表中的成本估算对混元为保守估值（公开价未取得）。
+- "外套保留内搭"未做真实生成验证。
+- 提示词对比仅一次三图，未做盲评与多样本统计。
+
+### 错误与修正记录
+- 初版 `createStore` 用 `tiersFor('MiniMax')` 计算体验额度，导致默认精档（¥6.90）下单即余额不足 → 改为固定一次标准档额度（690 分）。
+- 初版并发检查排在余额检查之后，同会话第二次下单返回 402 而非 409 → 调整为先判并发再判余额；独立评审进一步指出扣费与入队之间的 TOCTOU，改为"先占位再扣费"。
+- 初版区域热区对所有分类开放，下半身会叠加上衣 → 按商品分类限制热区；独立评审指出"全身"热区会盖住上身/下身 → 加 z-index 分层。
+- CSS 中 `img { display:block }` 覆盖了 `hidden` 属性，导致未上传时露出预览占位图 → 加 `[hidden]{display:none!important}`。
+- `createApp` 复杂度 83 → 拆成路由表 + 具名 handler。
+- 验证脚本自身的问题：CDP 复用旧标签页（同一 URL 不触发重载）+ 浏览器实例端口冲突导致复用了上一个浏览器，表现为"订单不落盘、订单列表为空"。改为每次使用独立调试端口、独立 profile 并强制 reload 后，浏览器链路与 curl 链路结果一致。
