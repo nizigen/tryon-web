@@ -1,20 +1,28 @@
 import { api, deviceId, getSessionId, setSessionId } from './lib/api.js';
-import { clear, h, money, toast } from './lib/dom.js';
+import { clear, closeAllMenus, h, money, toast } from './lib/dom.js';
 import { renderImport } from './views/import.js';
 import { renderMe } from './views/me.js';
 import { renderShop } from './views/shop.js';
-import { renderSourceTryon, renderTryon } from './views/tryon.js';
+import { renderSettings } from './views/settings.js';
+import { renderStudio } from './views/studio.js';
+import { renderTryon } from './views/tryon.js';
+import { renderWardrobe } from './views/wardrobe.js';
 
 const root = document.getElementById('main');
 const balanceValue = document.getElementById('balance-value');
-const balanceChip = document.getElementById('balance-chip');
-const gatewayNotice = document.getElementById('gateway-notice');
+const balanceBox = document.getElementById('balance-box');
+const demoBadge = document.getElementById('demo-badge');
 
 const ctx = {
-  config: { models: [], packs: [], categories: [], fits: [] },
+  config: { models: [], packs: [], categories: [], garmentTypes: [], fits: [] },
+  settings: null,
   products: [],
-  balanceCents: 0,
+  demoMode: false,
+  model: null,
   importedSource: null,
+  importedItems: [],
+  pendingPiece: null,
+  balanceCents: 0,
   onNavigate,
   onOpenProduct,
   onOpenImport,
@@ -33,7 +41,7 @@ const ctx = {
 
 function onBalanceChanged(cents) {
   ctx.balanceCents = cents;
-  balanceValue.textContent = money(cents);
+  if (balanceValue) balanceValue.textContent = money(cents);
 }
 
 function onOpenProduct(productId) {
@@ -52,39 +60,75 @@ function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
   const [route, id] = hash.split('/');
   if (route === 'tryon' && id) return { route: 'tryon', id };
-  if (route === 'source-tryon') return { route: 'source-tryon' };
-  if (route === 'import') return { route: 'import' };
-  if (route === 'me') return { route: 'me' };
+  if (['shop', 'studio', 'wardrobe', 'settings', 'import', 'me'].includes(route)) return { route };
   return { route: 'shop' };
 }
 
-function setActiveTab(route) {
-  const tabRoute = route === 'tryon' || route === 'import' || route === 'source-tryon' ? 'shop' : route;
-  for (const tab of document.querySelectorAll('.tab')) {
-    const active = tab.dataset.route === tabRoute;
-    tab.classList.toggle('is-active', active);
-    if (active) tab.setAttribute('aria-current', 'page');
-    else tab.removeAttribute('aria-current');
+function setActiveNav(route) {
+  const active = route === 'tryon' ? 'studio' : route === 'import' ? 'shop' : route;
+  for (const item of document.querySelectorAll('.nav__item')) {
+    const on = item.dataset.route === active;
+    item.classList.toggle('is-active', on);
+    if (on) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
   }
 }
 
 function render() {
   const { route, id } = currentRoute();
-  setActiveTab(route);
+  setActiveNav(route);
+  // 先收掉展开中的下拉：它的 document 监听器挂在被清掉的节点上，不摘就会一直留着。
+  closeAllMenus();
   clear(root);
   if (route === 'tryon') renderTryon(root, ctx, id);
-  else if (route === 'source-tryon') renderSourceTryon(root, ctx);
+  else if (route === 'studio') {
+    const preset = ctx.pendingPiece;
+    ctx.pendingPiece = null;
+    renderStudio(root, ctx, preset);
+  } else if (route === 'wardrobe') renderWardrobe(root, ctx);
+  else if (route === 'settings') renderSettings(root, ctx);
   else if (route === 'import') renderImport(root, ctx);
   else if (route === 'me') renderMe(root, ctx);
   else renderShop(root, ctx);
+  // 换页必须回到顶部：否则从长页面（如工作台）跳到短页面时，
+  // 浏览器会把 scrollY 钳到新页面高度，标题被顶栏压住。
+  window.scrollTo(0, 0);
   root.focus({ preventScroll: true });
 }
 
-async function boot() {
-  for (const tab of document.querySelectorAll('.tab')) {
-    tab.addEventListener('click', () => onNavigate(tab.dataset.route));
+function applyDemoMode(on) {
+  ctx.demoMode = on;
+  document.body.classList.toggle('is-demo', on);
+  if (demoBadge) demoBadge.hidden = !on;
+  if (balanceBox) balanceBox.hidden = on;
+}
+
+async function loadSettings() {
+  try {
+    ctx.settings = await api('/api/settings');
+  } catch {
+    ctx.settings = null;
   }
-  balanceChip.addEventListener('click', () => onNavigate('me'));
+  ctx.model = ctx.settings?.model ?? ctx.config.defaultModel ?? ctx.config.models[0]?.id ?? null;
+  if (ctx.settings && typeof ctx.settings.demoMode === 'boolean') applyDemoMode(ctx.settings.demoMode);
+}
+
+function wireNav() {
+  for (const item of document.querySelectorAll('.nav__item')) {
+    item.addEventListener('click', () => onNavigate(item.dataset.route));
+  }
+  for (const group of document.querySelectorAll('.nav__group')) {
+    const title = group.querySelector('.nav__group-title');
+    title.addEventListener('click', () => {
+      const next = title.getAttribute('aria-expanded') !== 'true';
+      title.setAttribute('aria-expanded', next ? 'true' : 'false');
+      group.classList.toggle('is-collapsed', !next);
+    });
+  }
+}
+
+async function boot() {
+  wireNav();
   window.addEventListener('hashchange', render);
 
   const skeleton = h('div', { class: 'grid' }, Array.from({ length: 4 }, () => h('div', { class: 'skeleton skeleton-card' })));
@@ -92,18 +136,17 @@ async function boot() {
 
   try {
     ctx.config = await api('/api/config');
-    if (!ctx.config.gateway?.reachable) {
-      gatewayNotice.hidden = false;
-      gatewayNotice.textContent = '图片服务未连接，暂时无法生成试穿结果';
+    applyDemoMode(Boolean(ctx.config.demoMode));
+    if (ctx.config.gateway && ctx.config.gateway.reachable === false) {
+      toast('图片服务未连接，暂时无法生成试穿结果');
     }
   } catch (error) {
-    gatewayNotice.hidden = false;
-    gatewayNotice.textContent = `配置加载失败：${error.message}`;
+    toast(`配置加载失败：${error.message}`);
   }
 
   try {
     const payload = await api('/api/products');
-    ctx.products = payload.products;
+    ctx.products = payload.products ?? [];
   } catch (error) {
     toast(error.message);
     ctx.products = [];
@@ -117,6 +160,7 @@ async function boot() {
     toast(error.message);
   }
 
+  await loadSettings();
   render();
 }
 

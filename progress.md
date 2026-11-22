@@ -140,3 +140,35 @@
 **错误与修正**
 - 拼多多无 cookie 时最初报「页面里没有找到商品数据」，因为 `extractBalancedJson` 的 marker 写死了 `window.rawData =`（带空格）。改为 marker `window.rawData` + 找 `=` 再找 `{` 后，能正确识别 `needLogin:true` 并给出可操作错误。
 - 全仓 `node --test` 与我并行的真实网络 `node -e` 同时跑时会 flaky（会话并发、充值断言），单独或连续两次均全绿，属并行负载时序。
+
+## 2025-11-23 · v3：多件穿搭 + 演示模式 + 设置页模型入口 + 仿 flyne 深色工作台
+
+**输入与决策**
+- 用户要求：①「先把付费这套拿下来，我要先做个演示不要让人看到付费」；②「模型给配置的入口在设置里面」；③ 前端照 `https://flyne.ai/cn/` 做（布局、质感、下拉菜单、按钮形状、字体）；④ 上衣下装之外要有首饰等更多品类，并继续 REA 原扩展；⑤ 支持多选（上衣 + 下装同时、里衣 + 外套、裙子 + 丝袜、鞋子单独一栏）；⑥ 去淘宝抄标签做选项；⑦ 下拉「未选择态」与「展开态」样式必须一致；⑧ 多开 subagent。
+- 设计来源与令牌见 `docs/frontend-design-reference.md`；多件契约见 `docs/OUTFIT_MODEL.md`；原扩展品类能力见 `docs/rea-tryiton-categories.md`（结论：原扩展只支持单件单分类，Live 模式是逐个 switch 不是叠穿）；淘宝词表见 `docs/taobao-tags.md` 与 `data/taxonomy.json`。
+
+**变更**
+- 后端：`POST /api/orders` 支持 `pieces[]`（七格、accessory ≤2、总数 ≤5、dress 与 top/bottom 互斥），每件单品在占位前取图；新增 `GET/PATCH /api/settings`（模型持久化到 `state.json` 的 `settings.model`）；`DEMO_MODE=1` 时 `priceCents/costCents` 为 0、跳过余额校验、支付接口 403；`src/prompt.mjs` 新增 `SLOTS/SLOT_ORDER/orderPieces/buildOutfitPrompt`（按格排序后编号参考图）；`src/tryon.mjs` 支持 `payload.referenceImages` 数组（缺省回退 `[person, garment]`）。
+- 前端：按 flyne 重做为深色工作台——左侧可折叠导航、`#0a0a0a` 底/`#111` 面板、卡片 20px 圆角、控件 8px、胶囊 999px、紫色渐变主按钮、PingFang 字体栈；新增 `#/studio`（七格搭配台）、`#/wardrobe`（七组类目词表）、`#/settings`（模型选择、取图来源状态、网关连通性）；自制胶囊下拉（`public/lib/dom.js` 的 `createCapsuleSelect`）保证收起态与展开态同尺寸同字体。
+- 演示模式：`public/app.js` 的 `applyDemoMode()` 切换 `body.is-demo`、隐藏余额与演示徽标；橱窗、订单、工作台在演示模式下不渲染任何金额。
+- 新增 `run-demo.cmd`（`DEMO_MODE=1` 启动）。
+
+**验证（真实执行）**
+- `node --test` **89/89 通过**（新增多件下单、pieces 校验、settings 读写、演示模式计费为 0 等用例）。
+- 真实多件出图（`DEMO_MODE=1`，`artifacts/probe/probe-studio.mjs`）：上衣 + 下装 → 201、`priceCents:0`、25s success、结果 1828900B，人物身份保留且上下装同时替换（`artifacts/test/studio-result.png`）。
+- 全路由截图（`artifacts/shoot-all.mjs`，6 路由 × 1440/768/390 = 18 张）全部成功，`scrollWidth === clientWidth`、无越界元素。
+- 设置页：`GET /api/settings` 返回 model/4 个模型/取图来源布尔/网关连通；`PATCH` 后回读一致。
+- 下拉一致性实测：trigger 与 item 同为 40px 高、`padding 0 14px`、14px 字号，文字左边缘坐标一致。
+
+**修复的真机缺陷**
+- 换页不重置滚动 → 从长页跳到短页时标题被顶栏压住（`render()` 末尾补 `window.scrollTo(0, 0)`）。
+- `.btn` 在横向 flex 里被压缩，「解析链接」断成两行（补 `white-space: nowrap; flex: 0 0 auto`）。
+- `.app-shell` 的 `min-height:100vh` 把短页面内容推低（补 `align-content: start`）。
+
+**未验证 / 已知缺口**
+- 多件越多越容易串味；本轮只验证了上衣 + 下装两件，五件满配未做真实生成对比。
+- 演示模式只隐藏前端金额，`data/state.json` 里仍记录 `priceCents`（值恒为 0），真实计费模式未在本轮回归。
+- 抖音小程序工程仍未开始（本轮只做 Web 工作台）。
+
+**错误与修正**
+- `public/lib/garment-taxonomy.js` 由子代理生成时整份中文被 GBK 覆写成乱码（`node --check` 不报错，因为它只查语法）。改为从 `data/taxonomy.json` 程序化生成（`artifacts/build-taxonomy.mjs`），并在全仓扫描 U+FFFD 确认 0 命中。

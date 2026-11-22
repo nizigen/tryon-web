@@ -41,3 +41,18 @@
 ## 退出标准
 
 自动化测试全绿 + 真实生成与页面证据 + 独立评审无阻断项 + 文档与实现一致。
+
+## v3 · 多件搭配 + 深色工作台 + 演示模式（2025-11-22）
+
+契约：`docs/OUTFIT_MODEL.md`；视觉：`docs/frontend-design-reference.md`。
+
+- [x] 拼多多 cookie 落地并验证（`data/cookies.json` 的 `pdd`，goods1 直连 29 图）
+- [x] 采集 flyne.ai/cn 设计令牌与截图（`docs/evidence/flyne-*.png`）
+- [x] 定义七个穿搭格子与 pieces[] 契约
+- [ ] 后端：pieces[] 多件下单、分层提示词、DEMO_MODE、/api/settings（src/* + test/*）
+- [ ] 前端：深色工作台、胶囊下拉一致性、studio/settings/wardrobe 路由（public/*）
+- [ ] 品类词表：data/taxonomy.json（淘宝标签）+ public/lib/garment-taxonomy.js
+- [ ] 集成：重启服务、`node --test` 全绿、`artifacts/probe/probe-studio.mjs` 真实出图
+- [ ] 视觉验收：1440/1024/768/390 截图无横向溢出、下拉默认/展开一致
+- [ ] 文档同步：PRD / APP_FLOW / BACKEND_STRUCTURE / FRONTEND_GUIDELINES
+- [ ] 提交（演示模式默认开启的启动脚本 `run-demo.cmd`）

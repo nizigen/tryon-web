@@ -62,11 +62,13 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
     job.stage = 'generating';
     job.updatedAt = new Date().toISOString();
     try {
-      const { model, prompt, person, garment, quality, size } = job.payload;
+      const { model, prompt, person, garment, referenceImages, quality, size } = job.payload;
+      // referenceImages 为多件穿搭提供的完整参考图数组；缺省时退回旧单件 [person, garment]。
+      const images = Array.isArray(referenceImages) ? referenceImages : [person, garment];
       const { mimeType, buffer } = await generateImage({
         model,
         prompt,
-        referenceImages: [person, garment],
+        referenceImages: images,
         quality,
         size,
       }, env, fetchImpl, { timeoutMs });
@@ -109,7 +111,7 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
     reserve,
     release,
 
-    enqueue({ orderId, sessionId, payload }) {
+    enqueue({ orderId, sessionId, payload, start = true }) {
       if (activeJobFor(sessionId)) throw new HttpError(409, 'BUSY', '已有试穿任务正在进行，请等待完成');
       const job = {
         id: randomUUID(),
@@ -127,8 +129,31 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
       reservations.delete(sessionId);
       pending.push(job);
       pruneJobs();
-      pump();
+      // start=false 时先排队不启动：调用方还要把 jobId 落库，落库成功后再 start。
+      // 这样「订单已建但 jobId 没写进订单」的窗口里不会已经开始消耗上游额度。
+      if (start) pump();
       return job;
+    },
+
+    /** 启动一个排队中的任务；已经启动或已完成则什么也不做。 */
+    start(jobId) {
+      const job = jobs.get(jobId);
+      if (!job || job.status !== 'queued') return;
+      pump();
+    },
+
+    /** 撤销一个尚未开始的任务（用于下单过程中途失败的回滚）。 */
+    cancel(jobId, reason = 'CANCELLED') {
+      const job = jobs.get(jobId);
+      if (!job || job.status !== 'queued') return false;
+      const index = pending.indexOf(job);
+      if (index >= 0) pending.splice(index, 1);
+      job.status = 'failed';
+      job.stage = 'failed';
+      job.error = { code: reason, message: '本次试穿已取消' };
+      job.payload = null;
+      job.updatedAt = new Date().toISOString();
+      return true;
     },
 
     getJob(id) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildTryonPrompt, GARMENT_TYPES, isCategory, isGarmentType } from '../src/prompt.mjs';
+import { buildOutfitPrompt, buildTryonPrompt, GARMENT_TYPES, isCategory, isGarmentType } from '../src/prompt.mjs';
 
 test('分类白名单只有上衣、下装、连衣裙', () => {
   assert.equal(isCategory('tops'), true);
@@ -84,4 +84,29 @@ test('用户补充要求为空时不生成 USER REQUEST 段', () => {
 test('版型选择进入提示词', () => {
   const prompt = buildTryonPrompt({ category: 'tops', garmentType: 'tee', fit: 'oversized' });
   assert.match(prompt, /worn slightly oversized/);
+});
+
+test('多件穿搭提示词分层且参考图编号按 top→outer→bottom→hosiery 排列', () => {
+  const prompt = buildOutfitPrompt({
+    pieces: [
+      { slot: 'bottom', garmentType: '百褶裙' },
+      { slot: 'top', garmentType: '毛衣' },
+      { slot: 'outer', garmentType: '风衣' },
+      { slot: 'hosiery', garmentType: '连裤袜' },
+    ],
+  });
+  assert.match(prompt, /LAYERING \(from inner to outer, top to bottom\)/);
+  assert.match(prompt, /reference image 2 = top/);
+  assert.match(prompt, /reference image 3 = outer/);
+  assert.match(prompt, /reference image 4 = bottom/);
+  assert.match(prompt, /reference image 5 = hosiery/);
+  assert.match(prompt, /keep the inner top visible/);
+  assert.match(prompt, /hosiery texture and colour show below/);
+  assert.match(prompt, /must not cover the shoe surface/);
+});
+
+test('连衣裙在提示词里用一件式描述', () => {
+  const prompt = buildOutfitPrompt({ pieces: [{ slot: 'dress', garmentType: '吊带裙' }] });
+  assert.match(prompt, /reference image 2 = dress/);
+  assert.match(prompt, /one-piece dress/);
 });

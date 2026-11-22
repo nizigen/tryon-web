@@ -4,9 +4,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#ffffff" />
+  <meta name="theme-color" content="#0a0a0a" />
   <meta name="description" content="橱窗选衣 · 一键 AI 试穿，看到衣服穿在自己身上的效果" />
-  <title>穿搭试穿间 · AI 虚拟试穿</title>
+  <title>搭配试穿间 · AI 虚拟试穿</title>
   <link rel="stylesheet" href="/style.css" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
 </head>
@@ -14,25 +14,57 @@
 <body>
   <a class="skip-link" href="#main">跳到主要内容</a>
 
-  <header class="topbar">
-    <div class="topbar__inner">
-      <div class="brand">
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <div class="sidebar__brand">
         <span class="brand__mark" aria-hidden="true">试</span>
-        <span class="brand__name">穿搭试穿间</span>
+        <span class="brand__name">搭配试穿间</span>
+        <span class="demo-badge" id="demo-badge" hidden>演示</span>
       </div>
-      <nav class="tabs" aria-label="主导航">
-        <button type="button" class="tab is-active" data-route="shop" aria-current="page">橱窗</button>
-        <button type="button" class="tab" data-route="me">我的</button>
-      </nav>
-      <button type="button" class="chip chip--balance" id="balance-chip" title="试穿余额">
-        <span class="chip__label">余额</span>
-        <span class="chip__value" id="balance-value">—</span>
-      </button>
-    </div>
-    <div class="topbar__notice" id="gateway-notice" hidden role="status"></div>
-  </header>
 
-  <main id="main" class="view-root" tabindex="-1"></main>
+      <nav class="nav" id="nav">
+        <div class="nav__group" data-group="pick">
+          <button type="button" class="nav__group-title" aria-expanded="true">
+            <span>选衣</span>
+            <span class="nav__chev" aria-hidden="true">▾</span>
+          </button>
+          <div class="nav__items">
+            <button type="button" class="nav__item" data-route="shop">橱窗</button>
+            <button type="button" class="nav__item" data-route="wardrobe">我的衣橱</button>
+          </div>
+        </div>
+        <div class="nav__group" data-group="studio">
+          <button type="button" class="nav__group-title" aria-expanded="true">
+            <span>工作台</span>
+            <span class="nav__chev" aria-hidden="true">▾</span>
+          </button>
+          <div class="nav__items">
+            <button type="button" class="nav__item" data-route="studio">搭配工作台</button>
+            <button type="button" class="nav__item" data-route="settings">设置</button>
+          </div>
+        </div>
+        <div class="nav__group" data-group="account">
+          <button type="button" class="nav__group-title" aria-expanded="true">
+            <span>我的</span>
+            <span class="nav__chev" aria-hidden="true">▾</span>
+          </button>
+          <div class="nav__items">
+            <button type="button" class="nav__item" data-route="me">订单与说明</button>
+          </div>
+        </div>
+      </nav>
+
+      <div class="sidebar__foot">
+        <div class="balance-box" id="balance-box">
+          <span class="balance-box__label">余额</span>
+          <span class="balance-box__value" id="balance-value">—</span>
+        </div>
+        <p class="sidebar__note">试穿结果为 AI 生成，仅供参考</p>
+      </div>
+    </aside>
+
+    <main id="main" class="view-root" tabindex="-1"></main>
+  </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 

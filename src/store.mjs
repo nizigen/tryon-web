@@ -9,7 +9,7 @@ import { PACKS, TRIAL_CREDITS } from './pricing.mjs';
 const WELCOME_CENTS = TRIAL_CREDITS * 690;
 
 export function createStore({ dir, catalogFile, logger = console }) {
-  let state = { sessions: [], orders: [], payments: [] };
+  let state = { sessions: [], orders: [], payments: [], settings: { model: null } };
   let catalog = [];
   let writeChain = Promise.resolve();
 
@@ -27,6 +27,9 @@ export function createStore({ dir, catalogFile, logger = console }) {
         sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
         orders: Array.isArray(parsed.orders) ? parsed.orders : [],
         payments: Array.isArray(parsed.payments) ? parsed.payments : [],
+        settings: {
+          model: parsed.settings && typeof parsed.settings.model === 'string' ? parsed.settings.model : null,
+        },
       };
     }
     const catalogRaw = await readFile(catalogFile, 'utf8');
@@ -103,6 +106,18 @@ export function createStore({ dir, catalogFile, logger = console }) {
 
     getSession(id) {
       return findSession(id);
+    },
+
+    getSettings() {
+      return { model: state.settings.model };
+    },
+
+    async updateSettings(patch = {}) {
+      if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
+        state.settings.model = typeof patch.model === 'string' && patch.model.trim() ? patch.model.trim() : null;
+      }
+      await persist();
+      return { model: state.settings.model };
     },
 
     async addBalance(sessionId, amountCents) {

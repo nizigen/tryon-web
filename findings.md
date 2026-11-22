@@ -181,7 +181,25 @@
 - 抖音图片 CDN 认手机 UA：`download()` 用 `platform.ua ?? UA`，抖音平台表带 `ua: UA_M`。
 - 端到端实测（真实 HTTP）：淘宝分享文案 → 13 图 → 下单 690 分 → 25s success → 结果 1781282B；抖音商品 → 2 图 → 25s success → 1746258B；抖音视频帖 → 1 图 23672B；京东 `https://item.jd.com/100012043978.html`（`runCli:null` 完全禁用 OpenCLI）→ 10 图 0.4s，完整链路下单 690 分 → 25s success → 结果 1500318B。`node --test` 81/81 通过。
 
-## 12. 支付与身份的边界
+## 12. 多件穿搭与演示模式（实测：2025-11-23）
+
+**动机**：用户要求「上衣和下装同时选择」「里衣 + 外套」「裙子下面搭丝袜」「鞋子单独一栏」，并且先做演示不要露出付费。
+
+| 问题 | 结论 | 依据 |
+|---|---|---|
+| 原扩展能不能叠穿 | **不能**：只支持单件单分类（clothing=tops/bottoms/dresses、jewelry、accessories 等），Live 模式是「≤12 look 逐个 switch」 | `docs/rea-tryiton-categories.md`（REA 静态分析） |
+| 叠穿怎么实现 | **一次多参考图生成**：人物图 + 按 `SLOT_ORDER` 排序的各件单品图，提示词按格分层描述 | `src/prompt.mjs` 的 `buildOutfitPrompt`；the image service `codex/gpt-image-2` 支持多张 `reference_images` |
+| 为什么不用 FASHN 逐件叠 | FASHN 的 `bottoms` 是**叠加式**：裙子会画在裤子外侧而不是替换；两件套需先换底装再叠 | 本机 ComfyUI 实测（第 7 节） |
+| 七格怎么定 | `top/outer/bottom/dress/hosiery/shoes/accessory`；accessory ≤2；dress 与 top/bottom 互斥；总数 ≤5 | `docs/OUTFIT_MODEL.md` |
+| 品类词表哪来 | 淘宝搜索页的类目 facets 抓取，落 `data/taxonomy.json`，前端 `public/lib/garment-taxonomy.js` 由它程序化生成 | `docs/taobao-tags.md` |
+| 下拉一致性怎么保证 | 自制胶囊下拉，收起/展开复用同一 trigger 节点，只切描边与浮层显隐；trigger 与 item 同 height/padding/font | 实测均为 40px 高、`padding 0 14px`、14px、文字左边缘对齐 |
+| 演示模式怎么关掉付费 | 服务端 `DEMO_MODE=1` → `priceCents/costCents` 为 0、跳过余额校验、支付接口 403；前端 `applyDemoMode()` 隐藏余额、价格、充值 | `run-demo.cmd`；`GET /api/config` 的 `demoMode` |
+
+- 真实出图：上衣（红底白花短袖衬衫）+ 下装（黑色高腰直筒牛仔裤）→ `priceCents:0` → 25s success，结果 `artifacts/test/studio-result.png`，人物身份保留、上下装同时替换。
+- 已知短板：件数越多越容易串味；本轮只验证两件，五件满配未做真实对比。
+- 设计参考：`https://flyne.ai/cn/` 的令牌（`#0a0a0a` 底、`#111/#161616` 面板、白 10% 描边、卡片 20px/控件 8px/胶囊 999px、紫 `#7c3aed→#a855f7`、PingFang 字体栈）记录在 `docs/frontend-design-reference.md`，证据截图 `docs/evidence/flyne-*.png`。
+
+## 13. 支付与身份的边界
 
 - 本轮充值为本地模拟（POST /api/payments + /confirm），真实支付未接入：抖音小程序虚拟支付需要主体资质与 AppID，且虚拟服务支付必须走平台虚拟支付能力，不得引导站外支付。
 - 会话为本地设备标识派生的匿名会话，不是真实鉴权；对外署形态必须换成抖音/微信登录（code2session → openid）并把订单归属绑定到平台用户。

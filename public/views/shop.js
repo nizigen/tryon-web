@@ -1,118 +1,105 @@
 import { h, money } from '../lib/dom.js';
 
-const CATEGORY_FILTERS = [
-  { id: '', label: '全部' },
+const FALLBACK_CATEGORIES = [
   { id: 'tops', label: '上衣' },
   { id: 'bottoms', label: '下装' },
   { id: 'dresses', label: '连衣裙' },
 ];
 
+/** 橱窗：商品网格 + 关键词搜索 + 分类筛选 + 「导入商品链接」入口。 */
 export function renderShop(root, ctx) {
-  let category = '';
-  let keyword = '';
-
+  const state = { q: '', category: '' };
   const grid = h('div', { class: 'grid' });
-  const chips = h('div', { class: 'filters', role: 'group', 'aria-label': '商品分类' });
+
   const search = h('input', {
     type: 'search',
-    placeholder: '搜索商品，例如：衬衫、牛仔裤',
+    class: 'search',
+    placeholder: '搜索商品名称或标签',
     'aria-label': '搜索商品',
-    oninput: (event) => {
-      keyword = event.target.value.trim();
-      paint();
-    },
+  });
+  search.addEventListener('input', () => {
+    state.q = search.value.trim().toLowerCase();
+    paintGrid();
   });
 
-  function paint() {
-    for (const chip of chips.children) {
-      chip.classList.toggle('is-active', chip.dataset.category === category);
-      chip.setAttribute('aria-pressed', chip.dataset.category === category ? 'true' : 'false');
-    }
-    const visible = ctx.products.filter((product) => {
-      const inCategory = !category || product.category === category;
-      const text = `${product.name} ${product.subtitle ?? ''} ${(product.tags ?? []).join(' ')}`.toLowerCase();
-      return inCategory && (!keyword || text.includes(keyword.toLowerCase()));
+  const filters = h('div', { class: 'filters', role: 'group', 'aria-label': '分类筛选' });
+  const categoryList = [{ id: '', label: '全部' }, ...(ctx.config.categories?.length ? ctx.config.categories : FALLBACK_CATEGORIES)];
+  for (const category of categoryList) {
+    const chip = h('button', {
+      type: 'button',
+      class: `filter${category.id === state.category ? ' is-active' : ''}`,
+      text: category.label,
+      'aria-pressed': category.id === state.category ? 'true' : 'false',
+    });
+    chip.addEventListener('click', () => {
+      state.category = category.id;
+      for (const node of filters.children) {
+        const on = node.dataset.category === category.id;
+        node.classList.toggle('is-active', on);
+        node.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+      paintGrid();
+    });
+    chip.dataset.category = category.id;
+    filters.append(chip);
+  }
+
+  const importCta = h('button', { type: 'button', class: 'import-cta', onclick: () => ctx.onOpenImport() }, [
+    h('span', { class: 'import-cta__icon', 'aria-hidden': 'true', text: '🔗' }),
+    h('span', { class: 'import-cta__text' }, [
+      h('strong', { text: '导入商品链接' }),
+      h('span', { text: '粘贴淘宝 / 京东 / 拼多多 / 抖音商品链接，抓取图片来试穿' }),
+    ]),
+    h('span', { class: 'import-cta__go', 'aria-hidden': 'true', text: '→' }),
+  ]);
+
+  function paintGrid() {
+    const products = ctx.products.filter((product) => {
+      if (state.category && product.category !== state.category) return false;
+      if (!state.q) return true;
+      const haystack = [product.name, product.subtitle, ...(product.tags ?? [])].join(' ').toLowerCase();
+      return haystack.includes(state.q);
     });
     grid.replaceChildren();
-    if (visible.length === 0) {
-      grid.append(h('div', { class: 'empty' }, [
-        h('p', { class: 'empty__title', text: '没有找到相关商品' }),
-        h('p', { text: '换个关键词，或看看全部商品。' }),
+    if (products.length === 0) {
+      grid.append(h('div', { class: 'empty grid__empty' }, [
+        h('p', { class: 'empty__title', text: '没有符合条件的商品' }),
+        h('p', { text: '换个关键词或切换分类，也可以直接导入商品链接。' }),
       ]));
-      grid.style.gridTemplateColumns = '1fr';
       return;
     }
-    grid.style.gridTemplateColumns = '';
-    for (const product of visible) grid.append(productCard(product));
+    for (const product of products) grid.append(productCard(product));
   }
 
   function productCard(product) {
-    const image = h('img', {
-      src: `/${product.image}`,
-      alt: product.name,
-      loading: 'lazy',
-      decoding: 'async',
-      width: 400,
-      height: 500,
-    });
-    return h('article', { class: 'product' }, [
+    return h('button', {
+      type: 'button',
+      class: 'product',
+      'aria-label': `${product.name}，试穿`,
+      onclick: () => ctx.onOpenProduct(product.id),
+    }, [
       h('div', { class: 'product__media' }, [
-        image,
-        h('span', { class: 'product__badge', text: 'AI 生成商品图' }),
+        h('img', { src: `/${product.image}`, alt: product.name, loading: 'lazy' }),
       ]),
       h('div', { class: 'product__body' }, [
-        h('h3', { class: 'product__name', text: product.name }),
-        h('p', { class: 'product__sub', text: product.subtitle ?? '' }),
+        h('span', { class: 'product__name', text: product.name }),
+        h('span', { class: 'product__sub', text: product.subtitle ?? '' }),
         h('div', { class: 'product__foot' }, [
-          h('span', { class: 'product__price', text: money(product.priceCents) }),
-          h('span', { class: 'product__tryon', text: `试穿 ${money(ctx.config.tryOnFromCents)} 起` }),
+          h('span', { class: 'tag-row' }, (product.tags ?? []).slice(0, 2).map((tag) => h('span', { class: 'tag', text: tag }))),
+          ctx.demoMode ? null : h('span', { class: 'product__price price', text: money(product.priceCents) }),
         ]),
-        h('button', {
-          type: 'button',
-          class: 'btn btn--primary btn--block btn--sm',
-          text: '试穿这件',
-          onclick: () => ctx.onOpenProduct(product.id),
-        }),
       ]),
     ]);
   }
 
-  for (const filter of CATEGORY_FILTERS) {
-    const chip = h('button', {
-      type: 'button',
-      class: 'filter',
-      text: filter.label,
-      dataset: { category: filter.id },
-      'aria-pressed': 'false',
-      onclick: () => {
-        category = filter.id;
-        paint();
-      },
-    });
-    chips.append(chip);
-  }
-
   root.append(
-    h('section', { class: 'hero' }, [
-      h('h1', { class: 'hero__title', text: '先看上身效果，再决定买哪件' }),
-      h('p', { class: 'hero__text', text: '在橱窗里挑一件衣服，上传一张本人照片，几十秒后就能看到穿在自己身上的样子。' }),
-      h('div', { class: 'hero__meta' }, [
-        h('span', { class: 'tag tag--accent', text: '新用户送 1 次试穿体验' }),
-        h('span', { class: 'tag', text: '支持上衣 · 下装 · 连衣裙' }),
-        h('span', { class: 'tag', text: '试穿结果为 AI 生成' }),
-      ]),
+    h('section', { class: 'page-head' }, [
+      h('h1', { class: 'page-title', text: '橱窗' }),
+      h('p', { class: 'page-sub', text: '挑一件喜欢的单品，上传真人照即可看上身效果。' }),
     ]),
-    h('div', { class: 'search' }, [search]),
-    h('div', { class: 'import-cta' }, [
-      h('div', {}, [
-        h('p', { class: 'import-cta__title', text: '想试别的衣服？' }),
-        h('p', { class: 'import-cta__text', text: '粘贴淘宝、京东、拼多多、抖音的链接（含视频/图文帖），直接用那件衣服试穿。' }),
-      ]),
-      h('button', { type: 'button', class: 'btn btn--sm', text: '导入商品链接', onclick: () => ctx.onOpenImport() }),
-    ]),
-    chips,
+    h('div', { class: 'shop-bar' }, [search, filters]),
+    importCta,
     grid,
   );
-
-  paint();
+  paintGrid();
 }

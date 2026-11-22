@@ -1,183 +1,144 @@
 import { api } from '../lib/api.js';
 import { h, toast } from '../lib/dom.js';
 
-const PLATFORM_HINT = '支持淘宝 / 天猫、京东、拼多多、抖音（商品与视频/图文帖）；手机分享出来的整段文案可以直接粘贴。';
-
-/** 粘贴商品链接 → 解析出商品图 → 选一张、选分类 → 进入试穿。 */
+/**
+ * 商品链接导入：粘贴链接 → 解析出缩略图网格 → 选一张 → 「用这件试穿」。
+ * 选中的图以 import 来源写进工作台对应的格子（默认上衣格），随后跳转 #/studio。
+ */
 export function renderImport(root, ctx) {
-  const state = {
-    url: '',
-    loading: false,
-    source: null,
-    imageIndex: 0,
-    category: 'tops',
-    garmentType: 'shirt',
-  };
+  const state = { url: '', loading: false, source: null, selected: 0, error: '' };
 
-  const urlInput = h('input', {
-    type: 'text',
-    placeholder: '粘贴商品链接或手机分享文案，例如 https://e.tb.cn/h.…',
-    'aria-label': '商品链接',
-    autocomplete: 'off',
-    spellcheck: 'false',
+  const urlInput = h('input', { type: 'text', class: 'search', placeholder: '粘贴淘宝 / 京东 / 拼多多 / 抖音商品链接', 'aria-label': '商品链接' });
+  const parseBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '解析链接' });
+  const errorEl = h('p', { class: 'error-text', hidden: true });
+  const results = h('div', { class: 'import' });
+
+  urlInput.addEventListener('input', () => {
+    state.url = urlInput.value.trim();
+    parseBtn.disabled = state.loading || !state.url;
   });
-  const parseButton = h('button', { type: 'button', class: 'btn btn--primary', text: '解析商品图' });
-  const statusText = h('p', { class: 'field__hint' });
-  const resultBox = h('div', { class: 'import__result' });
-  const categoryChips = h('div', { class: 'filters', role: 'group', 'aria-label': '服装分类' });
-  const typeSelect = h('select', { 'aria-label': '服装子类' });
-  const startButton = h('button', { type: 'button', class: 'btn btn--primary btn--block', text: '用这件试穿', disabled: true });
+  parseBtn.disabled = true;
+  urlInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !parseBtn.disabled) void parse();
+  });
+  parseBtn.addEventListener('click', () => void parse());
 
-  function paintStatus() {
-    if (state.loading) statusText.textContent = '正在读取商品页，通常需要 10–30 秒…';
-    else if (state.source) statusText.textContent = `已从${state.source.platformLabel}读取 ${state.source.images.length} 张商品图`;
-    else statusText.textContent = PLATFORM_HINT;
-  }
-
-  function paintCategories() {
-    categoryChips.replaceChildren();
-    for (const category of ctx.config.categories ?? []) {
-      const active = category.id === state.category;
-      categoryChips.append(h('button', {
-        type: 'button',
-        class: `filter${active ? ' is-active' : ''}`,
-        'aria-pressed': active ? 'true' : 'false',
-        text: category.label,
-        onclick: () => {
-          state.category = category.id;
-          state.garmentType = (ctx.config.garmentTypes?.[category.id] ?? [])[0]?.id ?? '';
-          paintCategories();
-          paintTypes();
-        },
-      }));
+  async function parse() {
+    if (!state.url || state.loading) return;
+    state.loading = true;
+    state.error = '';
+    errorEl.hidden = true;
+    parseBtn.disabled = true;
+    parseBtn.textContent = '解析中…';
+    try {
+      const payload = await api('/api/sources', { method: 'POST', body: { url: state.url } });
+      state.source = payload.source;
+      state.selected = 0;
+      paintResults();
+    } catch (error) {
+      state.source = null;
+      state.error = error.message;
+      errorEl.textContent = error.message;
+      errorEl.hidden = false;
+      paintResults();
+    } finally {
+      state.loading = false;
+      parseBtn.disabled = !state.url;
+      parseBtn.textContent = '解析链接';
     }
   }
 
-  function paintTypes() {
-    typeSelect.replaceChildren();
-    for (const type of ctx.config.garmentTypes?.[state.category] ?? []) {
-      typeSelect.append(h('option', { value: type.id, text: type.label }));
-    }
-    typeSelect.value = state.garmentType;
+  function thumbUrl(image) {
+    return `/api/sources/${state.source.id}/${image.index}`;
   }
 
-  function paintResult() {
-    resultBox.replaceChildren();
-    startButton.disabled = !state.source;
-    if (!state.source) return;
-    const grid = h('div', { class: 'import__grid' });
-    state.source.images.forEach((image, index) => {
-      const active = index === state.imageIndex;
-      grid.append(h('button', {
-        type: 'button',
-        class: `import__thumb${active ? ' is-active' : ''}`,
-        'aria-pressed': active ? 'true' : 'false',
-        'aria-label': `第 ${index + 1} 张商品图（${image.group === 'detail' ? '详情图' : '主图'}）`,
-        onclick: () => {
-          state.imageIndex = index;
-          paintResult();
-        },
-      }, [
-        h('img', { src: `/api/sources/${state.source.id}/${index}`, alt: '', loading: 'lazy', decoding: 'async' }),
+  function paintResults() {
+    results.replaceChildren();
+    if (!state.source) {
+      results.append(h('div', { class: 'empty' }, [
+        h('p', { class: 'empty__title', text: '还没有解析到商品图' }),
+        h('p', { text: '在上面粘贴商品链接，点「解析链接」。' }),
       ]));
+      return;
+    }
+    const source = state.source;
+    const head = h('div', { class: 'import__head' }, [
+      h('span', { class: 'tag', text: source.platformLabel || source.platform || '商品' }),
+      h('span', { class: 'import__title', text: source.title || '商品图' }),
+      h('span', { class: 'field__hint', text: `共 ${source.images.length} 张，选一张试穿` }),
+    ]);
+
+    const grid = h('div', { class: 'import__grid' });
+    for (const image of source.images) {
+      const selected = image.index === state.selected;
+      const item = h('button', {
+        type: 'button',
+        class: `import__thumb${selected ? ' is-active' : ''}`,
+        'aria-pressed': selected ? 'true' : 'false',
+        'aria-label': `选择第 ${image.index + 1} 张图`,
+      }, [
+        h('img', { src: thumbUrl(image), alt: `商品图 ${image.index + 1}`, loading: 'lazy' }),
+        selected ? h('span', { class: 'thumb__check', 'aria-hidden': 'true', text: '✓' }) : null,
+      ]);
+      item.addEventListener('click', () => {
+        state.selected = image.index;
+        paintResults();
+      });
+      grid.append(item);
+    }
+
+    const useBtn = h('button', {
+      type: 'button',
+      class: 'btn btn--primary',
+      text: '用这件试穿',
+      onclick: () => useThis(),
     });
-    resultBox.append(
-      h('div', { class: 'import__head' }, [
-        h('h2', { class: 'import__title', text: state.source.title }),
-        h('span', { class: 'tag', text: state.source.platformLabel }),
-      ]),
+    useBtn.disabled = source.images.length === 0;
+
+    results.append(
+      head,
       grid,
-      h('p', { class: 'field__hint', text: '点一张图选中它。试穿用的是这张商品图，不是商品页截图。' }),
-      h('div', { class: 'field' }, [
-        h('span', { class: 'field__label', text: '这件衣服属于' }),
-        categoryChips,
+      h('div', { class: 'import__foot' }, [
+        h('span', { class: 'field__hint', text: '选中的图会放进工作台「上衣」格，可在那里改到其它格子或新增单品。' }),
+        h('span', { class: 'push-end' }, [useBtn]),
       ]),
-      h('div', { class: 'field' }, [
-        h('label', { class: 'field__label', for: 'import-type', text: '服装子类' }),
-        typeSelect,
-      ]),
-      startButton,
     );
   }
 
-  async function parse() {
-    const url = urlInput.value.trim();
-    if (!url) {
-      toast('先粘贴一个商品链接');
-      urlInput.focus();
+  function useThis() {
+    const source = state.source;
+    if (!source || source.images.length === 0) {
+      toast('请先解析出商品图');
       return;
     }
-    state.loading = true;
-    state.source = null;
-    parseButton.disabled = true;
-    parseButton.textContent = '解析中…';
-    paintStatus();
-    paintResult();
-    try {
-      const payload = await api('/api/sources', { method: 'POST', body: { url } });
-      state.source = payload.source;
-      state.imageIndex = 0;
-      state.url = url;
-      paintStatus();
-      paintResult();
-    } catch (error) {
-      state.loading = false;
-      parseButton.disabled = false;
-      parseButton.textContent = '解析商品图';
-      statusText.textContent = error.message;
-      return;
-    }
-    state.loading = false;
-    parseButton.disabled = false;
-    parseButton.textContent = '解析商品图';
-    paintStatus();
-  }
-
-  function startTryon() {
-    if (!state.source) return;
-    ctx.importedSource = {
-      id: state.source.id,
-      title: state.source.title,
-      platformLabel: state.source.platformLabel,
-      imageIndex: state.imageIndex,
-      category: state.category,
-      garmentType: state.garmentType,
+    const image = source.images.find((item) => item.index === state.selected) ?? source.images[0];
+    ctx.pendingPiece = {
+      slot: 'top',
+      subtype: '',
+      source: {
+        kind: 'import',
+        sourceId: source.id,
+        sourceIndex: image.index,
+        name: source.title || '',
+        imageUrl: thumbUrl(image),
+      },
     };
-    ctx.onNavigate('source-tryon');
+    ctx.onNavigate('studio');
   }
-
-  parseButton.addEventListener('click', () => void parse());
-  urlInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void parse();
-    }
-  });
-  typeSelect.addEventListener('change', () => {
-    state.garmentType = typeSelect.value;
-  });
-  startButton.addEventListener('click', startTryon);
-  typeSelect.id = 'import-type';
 
   root.append(
-    h('section', { class: 'hero' }, [
-      h('h1', { class: 'hero__title', text: '从商品链接导入' }),
-      h('p', { class: 'hero__text', text: '把商品链接粘进来——手机分享出来的整段文案也行，我们读取那件衣服的原图，再穿到你身上。' }),
-      h('div', { class: 'hero__meta' }, [
-        h('span', { class: 'tag tag--accent', text: '支持手机分享短链' }),
-        h('span', { class: 'tag', text: '四家都直连，不用开浏览器' }),
-        h('span', { class: 'tag', text: '拼多多需登录 cookie' }),
+    h('section', { class: 'page-head' }, [
+      h('h1', { class: 'page-title', text: '导入商品链接' }),
+      h('p', { class: 'page-sub', text: '粘贴商品链接抓取图片，选一张直接拿去试穿。' }),
+    ]),
+    h('section', { class: 'card' }, [
+      h('div', { class: 'field' }, [
+        h('span', { class: 'field__label', text: '商品链接' }),
+        h('div', { class: 'inline-field' }, [urlInput, parseBtn]),
+        errorEl,
       ]),
     ]),
-    h('div', { class: 'card import' }, [
-      h('div', { class: 'search' }, [urlInput, parseButton]),
-      statusText,
-      resultBox,
-    ]),
+    h('section', { class: 'card' }, [h('h2', { class: 'section__title', text: '解析结果' }), results]),
   );
-
-  paintStatus();
-  paintCategories();
-  paintTypes();
-  paintResult();
+  paintResults();
 }

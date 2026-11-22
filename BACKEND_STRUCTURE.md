@@ -33,10 +33,13 @@ src/errors.mjs        统一错误类型
 
 **会话 sessions[]**（`data/state.json`）：`id`、`deviceId`、`balanceCents`（余额，单位分）、`createdAt`、`lastSeenAt`。
 
-**订单 orders[]**：`id`、`sessionId`、`productId`、`productName`、`model`、`tier`、`quality`、`size`、`category`、`garmentType`、`prompt`、`priceCents`、`costCents`、`status`、`jobId`、`resultFile`、`createdAt`、`finishedAt`、`errorCode`、`errorMessage`。
+**订单 orders[]**：`id`、`sessionId`、`productId`、`productName`、`model`、`tier`、`quality`、`size`、`category`、`garmentType`、`slots`、`pieces`、`prompt`、`priceCents`、`costCents`、`status`、`jobId`、`resultFile`、`createdAt`、`finishedAt`、`errorCode`、`errorMessage`。
 
 - `status`：`pending`（排队/生成中）· `success` · `failed` · `expired`（结果已过期清理）。
+- `slots` 是这次搭配用到的格子（`top/outer/bottom/dress/hosiery/shoes/accessory`，accessory 可出现两次）；`pieces` 记录每格的服装子类与名称，不含图片。
 - **订单记录不保存人物图与服装图**，只保存提示词与元数据；人像与服装图只在任务内存中流转。
+
+**设置 settings**（`data/state.json` 的 `settings`）：`model`——设置页选定的图片模型，`null` 表示跟随目录默认值。只在设置页写，下单时不再让用户选模型。
 
 **充值单 payments[]**：`id`、`sessionId`、`packId`、`amountCents`、`status`（pending/paid）、`createdAt`、`paidAt`。
 
@@ -59,12 +62,13 @@ src/errors.mjs        统一错误类型
 
 ## 试穿事务语义
 
-1. `POST /api/orders` 校验字段 → 校验会话 → 校验模型与档位 → **占位**（同一会话已有任务则 409）→ 校验余额 → **扣费（冻结）** → 建订单 → 建任务 → 返回。
+1. `POST /api/orders` 校验字段 → 校验会话 → 校验模型与档位 → 解析每件单品的服装图 → **占位**（同一会话已有任务则 409）→ 校验余额 → **扣费（冻结）** → 建订单 → 建任务 → 返回。
 2. 任务成功：订单 success，冻结额度转为实扣；结果图写入 `data/results/<orderId>.<ext>`。
 3. 任务失败/超时/上游无图：订单 failed，冻结额度**全额退回**，记录 `errorCode` 与脱敏错误文案。
-4. 占位之后任何异常（含建单失败）都会释放占位并退款，不会出现"扣了钱但没有任务"。
+4. 占位之后任何异常（含建单失败、某件单品取图失败）都会释放占位并退款，不会出现"扣了钱但没有任务"。
 5. 进程重启后内存任务丢失：启动时把磁盘上仍为 `pending` 的订单置为 `failed`（`INTERRUPTED`）并退款。
 6. 结果图 24 小时后清理，同时把关联订单置为 `expired`。
+7. **演示模式**（`DEMO_MODE=1`）：`priceCents`/`costCents` 一律为 0，跳过余额校验与扣费，`POST /api/payments` 与确认接口返回 403 `PAYMENT_DISABLED`。任务编排与结果产物和真实模式完全一致，便于验收。
 
 ## API 契约
 
@@ -76,19 +80,29 @@ src/errors.mjs        统一错误类型
 
 | 方法 | 路径 | 入参 | 出参 |
 | --- | --- | --- | --- |
-| GET | /api/config | — | `{ models:[{id,label,tiers:[{id,label,quality,size,priceCents,costCents}]}], defaultModel, defaultTier, tryOnFromCents, packs, categories, garmentTypes, fits, gateway:{reachable}, limits }` |
+| GET | /api/config | — | `{ models:[{id,label,tiers:[{id,label,quality,size,priceCents,costCents}]}], defaultModel, defaultTier, tryOnFromCents, packs, categories, slots, garmentTypes, fits, demoMode, gateway:{reachable}, limits }` |
 | GET | /api/products | `?category=&q=&limit=` | `{ products:[Product] }` |
 | GET | /api/products/:id | — | `{ product: Product }` |
 | POST | /api/session | `{ deviceId }` | `{ sessionId, balanceCents, packs }` |
 | GET | /api/session/:id | — | `{ sessionId, balanceCents, packs }` |
-| POST | /api/orders | `{ sessionId, productId?, sourceId?, sourceIndex?, sourceName?, model, tier, category?, garmentType?, fit?, prompt?, person, garment? }` | `{ orderId, jobId, priceCents, balanceCents }` |
-| GET | /api/orders | `x-session-id` | `{ orders:[Order] }`（含 jobId，不含 costCents） |
+| GET | /api/settings | — | `{ model, models, demoMode, sources:{taobao,jd,pdd,douyin}, gateway:{reachable} }`（`sources` 只回布尔，不回 cookie） |
+| PATCH | /api/settings | `{ model }` | `{ model }` |
+| POST | /api/orders | `{ sessionId, pieces:[{slot, garmentType?, source}], model, tier, fit?, prompt?, person }`；`pieces[].source` 为 `{kind:'product', productId}` / `{kind:'import', sourceId, sourceIndex, name}` / `{kind:'upload', garment}`；兼容旧的单件入参 `{productId?/category?/garmentType?/sourceId?/sourceIndex?/sourceName?, garment?}` | `{ order:{id,status,slots,priceCents}, orderId, jobId, priceCents, balanceCents }` |
+| GET | /api/orders | `x-session-id` | `{ orders:[Order] }`（含 jobId、slots，不含 costCents） |
 | GET | /api/orders/:id | `x-session-id` | `{ order:Order, resultToken }` |
 | GET | /api/jobs/:id | — | `{ jobId, orderId, status, stage, error?, updatedAt }` |
 | GET | /api/results/:file | `?k=<token>` | 结果图二进制（票据缺失或过期返回 403） |
-| POST | /api/payments | `{ sessionId, packId }` | `{ paymentId, amountCents, status:"pending", channels:[], notice }`（**本地模拟**，部署形态默认关闭） |
+| POST | /api/payments | `{ sessionId, packId }` | `{ paymentId, amountCents, status:"pending", channels:[], notice }`（**本地模拟**，部署形态与演示模式默认关闭） |
 | POST | /api/payments/:id/confirm | `{ sessionId }` | `{ paymentId, status:"paid", balanceCents }`（**本地模拟**） |
 | POST | /api/tryon | `{ model, person, garment, category, garmentType?, tier?, prompt? }` | 同步生成结果（兼容/本地直连；部署形态默认关闭） |
+
+### 多件搭配（pieces）
+
+- 七个格子：`top` 上衣、`outer` 外套、`bottom` 下装、`dress` 连衣裙、`hosiery` 袜、`shoes` 鞋、`accessory` 配饰。
+- 每个格子最多一件，`accessory` 最多两件，单次总件数 ≤5（`limits.maxPieces`）。
+- `dress` 与 `top`/`bottom` 互斥（同时出现返回 400）。
+- 服务端按 `SLOT_ORDER`（top → outer → bottom → dress → hosiery → shoes → accessory）排序后再拼提示词与参考图，保证「reference image N」编号与实际顺序一致：第 1 张恒为人物，其后依次为各件单品。
+- 每件单品的服装图在**占位之前**全部取好（目录商品读盘、导入走 `sourceId`、上传走 data URL），任一件失败都不会占用任务槽或扣费。
 
 ### 商品链接取图（src/source.mjs）
 
@@ -112,16 +126,18 @@ src/errors.mjs        统一错误类型
 - 目录商品图在服务端读盘并转成 data URL，与上传路径走同一套校验与下发方式。
 - 请求体 ≤24MiB；输出图 ≤16MiB。
 - `prompt` ≤500 码点，只能细化面料/版型/场景；拼接时置于受控段并做单行化与限长。
-- `category` 白名单 tops/bottoms/dresses；`garmentType` 必须属于该 category。
+- `pieces`：`slot` 必须属于七格白名单；`garmentType` 必须属于该格的服装子类；每格至多一件（`accessory` 至多两件）；总数 ≤5；`dress` 与 `top`/`bottom` 互斥。
 - 模型必须出现在当前 `tools/list` 目录中；档位必须属于该模型，否则 400。
 - 并发：同一会话同时只允许一个进行中任务（409）。
 - 商品链接：只接受 http/https，主机必须在平台白名单内；最多 40 张图；外部商品标题按不可信文本截断到 80 码点后才进提示词。
+- `PATCH /api/settings` 只接受 `model` 一个字段，长度 ≤120。
 
 ## 安全
 
 - 开发态仅监听 127.0.0.1，校验 `Host`/`Origin`/`Sec-Fetch-Site`；对外署形态需显式 `PUBLIC_ORIGIN` 白名单与 HTTPS 反代（**本轮不部署**）。
 - 部署形态（设置了 `PUBLIC_ORIGIN`）默认关闭本地模拟充值与 `/api/tryon` 直连生成，需显式 `ENABLE_SIMULATED_PAYMENTS=1` 才开启。
 - 会话 ID 为随机不可猜测串，仅用于本地演示级归属，**不等于真实鉴权**；真实身份应接抖音/微信登录（`code2session` → openid），本轮留桩未接入。
+- 演示模式（`DEMO_MODE=1`）只影响计费与前端展示，不降低鉴权或校验强度；开启时充值接口显式 403，避免演示环境被当成真实收款通道。
 - 人像与服装图只在任务内存中流转，不写入订单与磁盘；结果图落盘并按 TTL 清理。
 - 结果图访问使用带时效的 HMAC 票据，不把会话标识放进 URL。
 - 日志与错误消息不含 base64、凭据、完整上游响应体。
