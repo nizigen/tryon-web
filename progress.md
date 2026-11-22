@@ -155,8 +155,8 @@
 
 **验证（真实执行）**
 - `node --test` **96/96 通过**（新增多件下单、pieces 校验、settings 读写、演示模式计费为 0、设置模型白名单、cookie 不外泄、演示模式关直连、导入图进多件、非法单品四连、两配饰 + 5 件上限、下单中途失败回滚等用例）。
-- 真实多件出图（`DEMO_MODE=1`，`artifacts/probe/probe-studio.mjs`）：上衣 + 下装 → 201、`priceCents:0`、35s success、结果 1846617B，人物身份保留且上下装同时替换（`artifacts/test/studio-result.png`）。
-- 全路由截图（`artifacts/shoot-all.mjs`，6 路由 × 1440/768/390 = 18 张）全部成功，`scrollWidth === clientWidth`、无越界元素。
+- 真实多件出图（`DEMO_MODE=1`，`artifacts/probe/probe-studio.mjs`）：上衣 + 下装 → 201、`priceCents:0`、35s success、结果 1846617B，人物身份保留且上下装同时替换（证据 `docs/evidence/v3-multi-piece-result.png`）。
+- 全路由截图（`artifacts/shoot-all.mjs`，6 路由 × 1440/768/390 = 18 张）全部成功，`scrollWidth === clientWidth`、无越界元素；入库证据 `docs/evidence/v3-{shop,studio,wardrobe,settings,import}-1440.png` 与 `v3-{studio,settings}-390.png`。
 - 设置页：`GET /api/settings` 返回 model/4 个模型/取图来源布尔/网关连通；`PATCH` 后回读一致；写不存在的模型返回 400 `MODEL_UNAVAILABLE` 且不改动设置。
 - 下拉一致性实测：trigger 与 item 同为 40px 高、`padding 0 14px`、14px 字号，文字左边缘坐标一致。
 
