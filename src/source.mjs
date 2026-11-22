@@ -1,19 +1,21 @@
 /**
  * 商品链接取图：把淘宝 / 京东 / 拼多多 / 抖音商城的商品页解析成可直接试穿的商品图。
  *
- * 这几家的商品数据都不在静态 HTML 里：淘宝与拼多多把商品数据内嵌在页面的 window 上、
- * 京东由适配器从页面数据里取、抖音商城分享链接的跳转地址里带 goods_detail。
- * 因此解析借道本机 OpenCLI（复用用户已登录的浏览器会话），服务端只做
- * 「调用 → 归一 → 白名单下载」，不代客户端请求任意 URL。
+ * 这几家的商品数据都不在静态 HTML 里。解析分两种通道：
+ * - 直连：抖音视频/图文帖只凭 ttwid 就能读分享页（完全免费、免登录、不碰浏览器）；
+ *   淘宝/抖音商城的深层数据需要登录态 cookie，从本机 cookie 文件读取后直接请求。
+ * - OpenCLI 兜底：没有 cookie 或直连失败时，复用本机已登录的浏览器会话。
+ * 服务端只做「解析 → 归一 → 白名单下载」，不代客户端请求任意 URL。
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 
 import { HttpError } from './errors.mjs';
 import { MAX_IMAGE_BYTES, sniff } from './validate.mjs';
+import { loadCookies } from './cookies.mjs';
 
 const execFileAsync = promisify(execFile);
 const UA =
@@ -56,14 +58,16 @@ const PLATFORMS = [
     imageHosts: ['pddpic.com'],
   },
   {
-    // 抖音商城的 H5 详情页对浏览器一律风控（「请使用抖音APP扫码」），
-    // 但分享链接跳转目标里的 goods_detail 参数自带主图，不用登录也不用浏览器。
+    // 抖音两种链接都收：商品分享（v.douyin.com → haohuo 详情）与视频/图文帖（v.douyin.com → douyin.com/video|note）。
+    // 商品封面走 goods_detail（免登录）；视频/图文帖走 iesdouyin 分享页 + ttwid（免登录）。
+    // 更深一层（商品多图、视频原片）需要登录态 cookie，见 extractDouyinProduct / DOUYIN_DETAIL。
     id: 'douyin',
-    label: '抖音商城',
-    referer: 'https://haohuo.jinritemai.com/',
-    hosts: ['haohuo.jinritemai.com'],
+    label: '抖音',
+    referer: 'https://www.douyin.com/',
+    hosts: ['haohuo.jinritemai.com', 'www.douyin.com', 'www.iesdouyin.com', 'm.douyin.com'],
     shortHosts: ['v.douyin.com'],
-    imageHosts: ['ecombdimg.com'],
+    imageHosts: ['ecombdimg.com', 'douyinpic.com', 'byteimg.com', 'snssdk.com'],
+    ua: UA_M,
   },
 ];
 
@@ -230,6 +234,8 @@ async function resolveShortLink(url, fetchImpl, signal) {
   if (goods) return `https://mobile.yangkeduo.com/goods.html?goods_id=${goods[1]}`;
   const douyin = /https?:\/\/haohuo\.jinritemai\.com\/[^"'\s<>]+/.exec(body);
   if (douyin) return douyin[0];
+  const douyinVideo = /https?:\/\/(?:www\.)?douyin\.com\/(?:video|note)\/\d+/.exec(body);
+  if (douyinVideo) return douyinVideo[0];
   throw new HttpError(400, 'INVALID_URL', '这个分享链接里没有商品，请打开商品页再复制链接', 'url');
 }
 
@@ -431,15 +437,265 @@ function extractDouyin(url) {
   return { title: String(detail?.title ?? '').slice(0, 120), images };
 }
 
+/** 抖音分享页只用 ttwid（一次注册、长期复用），不需要账号登录。 */
+const DOUYIN_REGISTER = 'https://ttwid.bytedance.com/ttwid/union/register/';
+const DOUYIN_REGISTER_BODY = JSON.stringify({
+  region: 'cn', aid: 1768, needFid: false, service: 'www.ixigua.com',
+  migrate_info: { ticket: '', source: 'node' }, cbUrlProtocol: 'https', union: true,
+});
+let ttwidCache = { value: '', at: 0 };
+
+function cookieFromSetCookie(headers, name) {
+  const lines = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+  for (const line of lines) {
+    const m = new RegExp(`(?:^|[,\\s])${name}=([^;,\\s]+)`).exec(line);
+    if (m) return m[1];
+  }
+  return '';
+}
+
+async function douyinTtwid(fetchImpl, signal) {
+  // 12 小时内复用，避免每次解析都注册一次。
+  if (ttwidCache.value && Date.now() - ttwidCache.at < 12 * 60 * 60 * 1000) return ttwidCache.value;
+  const response = await fetchImpl(DOUYIN_REGISTER, {
+    method: 'POST', signal, headers: { 'content-type': 'application/json', 'user-agent': UA_M }, body: DOUYIN_REGISTER_BODY,
+  }).catch(() => null);
+  if (!response) throw new HttpError(502, 'IMAGE_FETCH_FAILED', '抖音解析初始化失败，请稍后重试');
+  const ttwid = cookieFromSetCookie(response.headers, 'ttwid');
+  void response.body?.cancel?.().catch(() => {});
+  if (!ttwid) throw new HttpError(502, 'IMAGE_FETCH_FAILED', '抖音解析初始化失败（没有拿到访问凭据）');
+  ttwidCache = { value: ttwid, at: Date.now() };
+  return ttwid;
+}
+
+function awemeIdFromUrl(url) {
+  const match = /(?:video|note|share\/video|share\/note)\/(\d{6,})/.exec(url.pathname + url.search) ??
+    /[?&](?:modal_id|aweme_id|item_ids)=(\d{6,})/.exec(url.search);
+  return match ? match[1] : '';
+}
+
+/** 从 `window._ROUTER_DATA` 里递归找 item_list（视频与图文的键不完全一样）。 */
+function findItemList(node, depth = 0) {
+  if (depth > 8 || !node || typeof node !== 'object') return null;
+  if (Array.isArray(node.item_list) && node.item_list.length && typeof node.item_list[0] === 'object') return node.item_list;
+  for (const value of Object.values(node)) {
+    const found = findItemList(value, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function parseRouterData(html) {
+  const match = /window\._ROUTER_DATA\s*=\s*([\s\S]*?)<\/script>/.exec(html);
+  if (!match) return null;
+  const text = match[1].trim().replace(/;$/, '');
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/** 抖音视频/图文帖：ttwid + iesdouyin 分享页，免登录拿到全部图片（视频则取封面）。 */
+async function extractDouyinShare(url, fetchImpl, signal) {
+  let finalUrl = url;
+  if (url.host === 'v.douyin.com') {
+    const response = await fetchImpl(url.href, { signal, redirect: 'manual', headers: { 'user-agent': UA_M } }).catch(() => null);
+    if (response) {
+      const location = response.headers.get('location');
+      void response.body?.cancel?.().catch(() => {});
+      if (location) finalUrl = new URL(location, url);
+    }
+  }
+  const awemeId = awemeIdFromUrl(finalUrl) || awemeIdFromUrl(url);
+  if (!awemeId) {
+    throw new HttpError(400, 'INVALID_URL', '这个抖音链接里没有视频或图文，请重新复制分享链接', 'url');
+  }
+  const ttwid = await douyinTtwid(fetchImpl, signal);
+  const headers = {
+    'user-agent': UA_M,
+    accept: 'text/html,application/xhtml+xml',
+    'accept-language': 'zh-CN,zh;q=0.9',
+    referer: 'https://www.douyin.com/',
+    cookie: `ttwid=${ttwid}`,
+  };
+  for (const kind of ['video', 'note']) {
+    const response = await fetchImpl(`https://www.iesdouyin.com/share/${kind}/${awemeId}/`, { signal, headers, redirect: 'follow' }).catch(() => null);
+    if (!response || !response.ok) continue;
+    const html = await response.text();
+    const data = parseRouterData(html);
+    if (!data) continue;
+    const item = findItemList(data)?.[0];
+    if (!item) continue;
+    const images = [];
+    const push = (u) => {
+      if (typeof u === 'string' && u && !images.some((x) => x.url === u)) images.push({ url: u, group: 'main' });
+    };
+    if (Array.isArray(item.images) && item.images.length) {
+      for (const image of item.images) for (const u of image?.url_list ?? []) push(u);
+    } else {
+      // 视频没有图集，用封面当唯一商品图。
+      for (const u of (item.video?.origin_cover?.url_list ?? item.video?.cover?.url_list ?? []).slice(0, 1)) push(u);
+    }
+    // 只保留白名单域名（douyinpic/byteimg/ecombdimg/snssdk），避免把任意地址当图片去抓。
+    const douyinPlatform = PLATFORMS.find((p) => p.id === 'douyin');
+    const allowed = images.filter((image) => {
+      try {
+        return imageHostAllowed(new URL(image.url), douyinPlatform);
+      } catch {
+        return false;
+      }
+    });
+    if (allowed.length) {
+      // 抖音图片 CDN（douyinpic/byteimg）的直链基本是一次性的：同一地址第二次请求就 403。
+      // 所以在解析时就把字节取回来缓存，后续试穿直接用缓存，不再回源。
+      const prefetched = [];
+      let totalBytes = 0;
+      for (const image of allowed.slice(0, 9)) {
+        if (/ecombdimg\.com/.test(image.url)) {
+          prefetched.push(image);
+          continue;
+        }
+        const res = await fetchImpl(image.url, { signal, headers: { 'user-agent': UA_M, referer: 'https://www.douyin.com/' } }).catch(() => null);
+        const type = String(res?.headers?.get('content-type') ?? '');
+        if (!res?.ok || !type.startsWith('image/')) {
+          void res?.body?.cancel?.().catch(() => {});
+          continue;
+        }
+        const buffer = Buffer.from(await res.arrayBuffer());
+        if (buffer.length < MIN_IMAGE_BYTES || buffer.length > MAX_IMAGE_BYTES) continue;
+        totalBytes += buffer.length;
+        if (totalBytes > 24 * 1024 * 1024) break;
+        prefetched.push({ url: image.url, group: image.group, buffer });
+      }
+      if (!prefetched.length) {
+        throw new HttpError(422, 'NO_IMAGES', '抖音视频/图文帖的图片受抖音 CDN 保护（服务器直连被拒），暂时只能解析抖音商城的商品链接；请粘贴商品分享链接');
+      }
+      return { title: String(item.desc ?? '').slice(0, 120), images: prefetched };
+    }
+  }
+  throw new HttpError(422, 'NO_IMAGES', '没有从这个抖音链接解析到图片，可能是不支持的链接类型');
+}
+
+/** 递归收集对象里所有形如淘宝图片的 URL（对接口结构变化免疫）。 */
+function deepCollectImages(node, allowed, out, depth = 0) {
+  if (depth > 12 || node == null) return;
+  if (typeof node === 'string') {
+    if (allowed(node) && !out.includes(node)) out.push(node);
+    return;
+  }
+  if (typeof node !== 'object') return;
+  for (const value of Object.values(node)) deepCollectImages(value, allowed, out, depth + 1);
+}
+
+function deepFindString(node, key, depth = 0) {
+  if (depth > 10 || !node || typeof node !== 'object') return '';
+  if (typeof node[key] === 'string' && node[key]) return node[key];
+  for (const value of Object.values(node)) {
+    const found = deepFindString(value, key, depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
+const MTOP_APPKEY = '12574478';
+function cookieValue(cookie, name) {
+  const m = new RegExp(`(?:^|;\\s*)${name}=([^;]*)`).exec(cookie);
+  return m ? m[1] : '';
+}
+
+/** 把响应里的 Set-Cookie 并进 cookie 头（_m_h5_tk / _m_h5_tk_enc 是 mtop 自己下发的）。 */
+function mergeSetCookies(jar, headers) {
+  const map = new Map();
+  for (const part of jar.split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const i = trimmed.indexOf('=');
+    if (i > 0) map.set(trimmed.slice(0, i), trimmed.slice(i + 1));
+  }
+  const lines = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+  for (const line of lines) {
+    const first = line.split(';')[0];
+    const i = first.indexOf('=');
+    if (i > 0) map.set(first.slice(0, i).trim(), first.slice(i + 1));
+  }
+  return [...map].map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+/**
+ * 淘宝直连：用登录态 cookie 走 mtop 详情接口（JSON），不再需要浏览器。
+ * mtop 签名 = md5(token + '&' + t + '&' + appKey + '&' + data)，token 取 _m_h5_tk 下划线前段。
+ * 浏览器导出的 cookie 里通常没有 _m_h5_tk（那是 h5api.m.taobao.com 首次请求才下发的），
+ * 所以先用空 token 探一次握手，把下发的 _m_h5_tk/_m_h5_tk_enc 并进 cookie 再签名重发。
+ */
+async function taobaoDirect(cookie, id, fetchImpl, signal) {
+  const data = JSON.stringify({ itemId: id });
+  let jar = cookie;
+  const invoke = async (token) => {
+    const t = Date.now();
+    const sign = createHash('md5').update(`${token}&${t}&${MTOP_APPKEY}&${data}`).digest('hex');
+    const url =
+      'https://h5api.m.taobao.com/h5/mtop.taobao.pcdetail.data.get/1.0/' +
+      `?jsv=2.7.2&appKey=${MTOP_APPKEY}&t=${t}&sign=${sign}` +
+      `&api=mtop.taobao.pcdetail.data.get&v=1.0&type=json&dataType=json&data=${encodeURIComponent(data)}`;
+    const response = await fetchImpl(url, {
+      signal,
+      headers: { 'user-agent': UA, accept: 'application/json', referer: `https://item.taobao.com/item.htm?id=${id}`, cookie: jar },
+    });
+    const text = await response.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+    return { response, json };
+  };
+
+  let token = cookieValue(jar, '_m_h5_tk').split('_')[0];
+  if (!token) {
+    const probe = await invoke('');
+    jar = mergeSetCookies(jar, probe.response.headers);
+    token = cookieValue(jar, '_m_h5_tk').split('_')[0];
+    if (!token) {
+      throw new HttpError(502, 'IMAGE_FETCH_FAILED', '淘宝没有下发访问令牌，cookie 可能已失效，请重新从浏览器复制');
+    }
+  }
+  let result = await invoke(token);
+  const ret = Array.isArray(result.json?.ret) ? result.json.ret.join(';') : '';
+  if (/令牌过期|令牌为空|TOKEN_EXOIRED|TOKEN_EXPIRED|TOKEN_EMPTY/i.test(ret)) {
+    jar = mergeSetCookies(jar, result.response.headers);
+    const rotated = cookieValue(jar, '_m_h5_tk').split('_')[0];
+    if (rotated) result = await invoke(rotated);
+  }
+  if (!result.json) throw new HttpError(502, 'IMAGE_FETCH_FAILED', '淘宝接口返回了非 JSON 内容，可能 cookie 已失效');
+  const retText = Array.isArray(result.json.ret) ? String(result.json.ret[0] ?? '') : '';
+  if (!retText.startsWith('SUCCESS')) {
+    throw new HttpError(502, 'IMAGE_FETCH_FAILED', `淘宝接口没有返回商品数据（${retText.slice(0, 60) || '未知错误'}）`);
+  }
+  const payload = result.json.data ?? {};
+  const urls = [];
+  const isTaoImage = (value) =>
+    /^https?:\/\/[^"'\s]*alicdn\.com\/[^"'\s]*\.(?:jpg|jpeg|png|webp)(?:[?#].*)?$/i.test(value) &&
+    !/-\d{1,3}-\d{1,3}\.(?:png|jpe?g|webp)(?:[?#]|$)/i.test(value);
+  deepCollectImages(payload, isTaoImage, urls);
+  const images = urls.map((u) => ({ url: u, group: 'main' }));
+  if (!images.length) return { title: '', images: [] };
+  const title = deepFindString(payload, 'title') || deepFindString(payload, 'subtitle');
+  return { title: String(title).slice(0, 120), images };
+}
+
 /**
  * 解析商品链接。同一时刻只跑一个解析：OpenCLI 共用一个浏览器会话，并发会互相踩。
  * @param {object} [options]
  * @param {(args: string[], timeout: number) => Promise<any>} [options.runCli] 测试注入，替代真实 OpenCLI
  */
-export function createSourceService({ env = process.env, fetchImpl = fetch, runCli: injected, settleMs = 8000, ttlMs = 30 * 60 * 1000, max = 20 } = {}) {
+export function createSourceService({ env = process.env, fetchImpl = fetch, runCli: injected, cookies, settleMs = 8000, ttlMs = 30 * 60 * 1000, max = 20 } = {}) {
   const entry = injected ? null : locateOpenCli(env);
   const nodeBin = injected ? null : locateNode(entry, env);
   const runCli = injected ?? (entry && nodeBin ? createRunner(entry, nodeBin) : null);
+  // 测试注入 runCli 时按「测试模式」看待，不读本机真实 cookie，保证测试可重复。
+  const cookieJar = cookies ?? (injected !== undefined ? {} : loadCookies(env));
   const sources = new Map();
   let queue = Promise.resolve();
   let pending = 0;
@@ -452,12 +708,31 @@ export function createSourceService({ env = process.env, fetchImpl = fetch, runC
   }
 
   async function extract(url, platform, signal) {
+    const cookie = cookieJar[platform.id] ?? '';
+    if (platform.id === 'douyin') {
+      // 商品分享页（haohuo）走 goods_detail；视频/图文帖走 ttwid 分享页。两者都免登录。
+      if (url.host === 'haohuo.jinritemai.com') return extractDouyin(url);
+      return extractDouyinShare(url, fetchImpl, signal);
+    }
+    if (platform.id === 'taobao') {
+      const id = taobaoId(url);
+      if (cookie) {
+        try {
+          const direct = await taobaoDirect(cookie, id, fetchImpl, signal);
+          if (direct.images.length) return direct;
+        } catch (error) {
+          if (!runCli) throw error;
+        }
+      }
+      if (!runCli) {
+        throw new HttpError(503, 'SOURCE_UNAVAILABLE', '没有淘宝登录 cookie，也没有 OpenCLI；请粘贴淘宝 cookie 后重试');
+      }
+      return extractTaobao(runCli, id, settleMs, signal);
+    }
     if (!runCli) {
       throw new HttpError(503, 'SOURCE_UNAVAILABLE', '没有找到 OpenCLI，无法读取商品页；请安装并登录 OpenCLI 后重试');
     }
-    if (platform.id === 'taobao') return extractTaobao(runCli, taobaoId(url), settleMs, signal);
     if (platform.id === 'jd') return extractJd(runCli, jdSku(url), signal);
-    if (platform.id === 'douyin') return extractDouyin(url);
     return extractPdd(runCli, pddGoodsId(url), settleMs, signal);
   }
 
@@ -484,7 +759,7 @@ export function createSourceService({ env = process.env, fetchImpl = fetch, runC
         }
         if (!imageHostAllowed(parsed, platform)) continue;
         if (images.some((item) => item.url === original)) continue;
-        images.push({ url: original, group: candidate.group });
+        images.push({ url: original, group: candidate.group, buffer: candidate.buffer });
         if (images.length >= MAX_IMAGES) break;
       }
       if (images.length === 0) {
@@ -535,10 +810,21 @@ export function createSourceService({ env = process.env, fetchImpl = fetch, runC
     if (!imageHostAllowed(new URL(image.url), platform)) {
       throw new HttpError(502, 'IMAGE_FETCH_FAILED', '商品图地址不在允许范围内');
     }
+    // 抖音图片直链是一次性的（第二次请求 403），解析时已把字节取回缓存，直接用缓存。
+    if (image.buffer) {
+      const cached = sniff(image.buffer);
+      if (!cached) throw new HttpError(502, 'IMAGE_FETCH_FAILED', '商品图格式不支持');
+      return { mime: cached, buffer: image.buffer };
+    }
     const response = await fetchImpl(image.url, {
       signal,
       redirect: 'error',
-      headers: { 'user-agent': UA, referer: platform.referer, accept: 'image/avif,image/webp,image/*,*/*' },
+      headers: {
+        // 抖音的图片 CDN 认手机 UA（与分享页取图保持一致），其它平台用桌面 UA。
+        'user-agent': platform.ua ?? UA,
+        referer: platform.referer,
+        accept: 'image/avif,image/webp,image/*,*/*',
+      },
     }).catch(() => null);
     if (!response?.ok) {
       void response?.body?.cancel().catch(() => {});

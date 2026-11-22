@@ -168,7 +168,7 @@ test('未知 sourceId 与越界索引报 404，过期后失效', async () => {
 });
 
 test('没有 OpenCLI 时给出可读的 503，而不是静默降级', async () => {
-  const sources = createSourceService({ env: { PATH: '' }, settleMs: 0 });
+  const sources = createSourceService({ env: { PATH: '' }, cookies: {}, settleMs: 0 });
   await assert.rejects(() => sources.create('https://item.taobao.com/item.htm?id=1'), { code: 'SOURCE_UNAVAILABLE' });
 });
 
@@ -373,7 +373,7 @@ test('抖音分享链接：从 goods_detail 参数取主图，不需要浏览器
     '5.30 11/09 Z@z.gO FUL:/ 【抖音商城】https://v.douyin.com/OEGaAtCdX2Q/ 透黑美学get到了！微透80d天鹅绒连裤袜 长按复制此条消息，打开抖音搜索，查看商品详情！:2pm';
   const source = await sources.create(shared);
   assert.equal(source.platform, 'douyin');
-  assert.equal(source.platformLabel, '抖音商城');
+  assert.equal(source.platformLabel, '抖音');
   assert.equal(source.title, '透黑美学get到了！微透80d天鹅绒连裤袜');
   assert.equal(source.images.length, 2);
   assert.match(source.images[0].url, /^https:\/\/p3-item\.ecombdimg\.com\//);
@@ -416,4 +416,75 @@ test('拼多多 ?ps= 分享链接：跟随 307 拿到 goods_id 再解析', async
     calls.find((args) => args[3] === 'open')[4],
     'https://mobile.yangkeduo.com/goods1.html?goods_id=845720245931',
   );
+});
+
+test('淘宝直连：无 _m_h5_tk 时先握手拿令牌，再签名取图', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push(String(url));
+    if (new URL(String(url)).host === 'h5api.m.taobao.com') {
+      const cookie = (init.headers && init.headers.cookie) || '';
+      if (!/_m_h5_tk=/.test(cookie)) {
+        const headers = new Headers();
+        headers.append('set-cookie', '_m_h5_tk=abc123_1799999999999; Path=/');
+        headers.append('set-cookie', '_m_h5_tk_enc=xyz; Path=/');
+        return new Response(JSON.stringify({ ret: ['FAIL_SYS_TOKEN_EMPTY::令牌为空'] }), { status: 200, headers });
+      }
+      return new Response(
+        JSON.stringify({
+          ret: ['SUCCESS::调用成功'],
+          data: {
+            item: { title: '测试商品', images: ['https://img.alicdn.com/imgextra/i1/1/O1CN01NnqqeI1syU8MPPYKX_!!1.jpg'] },
+            skuBase: { props: [{ values: [{ image: 'https://gw.alicdn.com/bao/uploaded/i3/1/O1CN01jVjoXP1syU8GHejdR_!!1.jpg' }] }] },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return imageResponse();
+  };
+  const sources = createSourceService({ fetchImpl, cookies: { taobao: '_tb_token_=t; cookie2=c' }, settleMs: 0 });
+  const source = await sources.create('https://item.taobao.com/item.htm?id=1');
+  assert.equal(source.title, '测试商品');
+  assert.equal(source.images.length, 2);
+  assert.ok(source.images.every((i) => /alicdn\.com/.test(i.url)));
+  assert.ok(calls.filter((c) => c.includes('h5api.m.taobao.com')).length >= 2, '应握手一次再签名请求一次');
+});
+
+test('抖音图文帖直连：ttwid + 分享页 _ROUTER_DATA 取图', async () => {
+  const fetchImpl = async (url) => {
+    const u = String(url);
+    if (u === 'https://ttwid.bytedance.com/ttwid/union/register/') {
+      const headers = new Headers();
+      headers.append('set-cookie', 'ttwid=tw123; Path=/');
+      return new Response('{}', { status: 200, headers });
+    }
+    if (u.includes('iesdouyin.com/share/video/')) {
+      const payload = { loaderData: { x: { videoInfoRes: { item_list: [{ desc: '图文标题', images: [{ url_list: ['https://p3-item.ecombdimg.com/a.jpg'] }] }] } } } };
+      return new Response(`<script>window._ROUTER_DATA = ${JSON.stringify(payload)};</script>`, { status: 200, headers: { 'content-type': 'text/html' } });
+    }
+    return imageResponse();
+  };
+  const sources = createSourceService({ fetchImpl, cookies: {}, settleMs: 0 });
+  const source = await sources.create('https://www.douyin.com/note/7704466212453371235');
+  assert.equal(source.title, '图文标题');
+  assert.equal(source.images.length, 1);
+});
+
+test('抖音视频封面受抖音 CDN 保护时给出可读提示', async () => {
+  const fetchImpl = async (url) => {
+    const u = String(url);
+    if (u.includes('ttwid.bytedance.com')) {
+      const headers = new Headers();
+      headers.append('set-cookie', 'ttwid=tw; Path=/');
+      return new Response('{}', { status: 200, headers });
+    }
+    if (u.includes('share/video/')) {
+      const payload = { loaderData: { a: { x: { item_list: [{ desc: '视频', video: { cover: { url_list: ['https://p3-sign.douyinpic.com/c.jpg'] } } }] } } } };
+      return new Response(`<script>window._ROUTER_DATA = ${JSON.stringify(payload)};</script>`, { status: 200, headers: { 'content-type': 'text/html' } });
+    }
+    return new Response('forbidden', { status: 403 });
+  };
+  const sources = createSourceService({ fetchImpl, cookies: {}, settleMs: 0 });
+  await assert.rejects(() => sources.create('https://www.douyin.com/video/7704466212453371235'), { code: 'NO_IMAGES' });
 });

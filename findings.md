@@ -164,7 +164,22 @@
 - 服务以 Electron 方式启动时 `process.execPath` 是 `DSH Desktop.exe`，`execFile(process.execPath, [opencliEntry])` 会把宿主 exe 当 node 跑。修法是 `locateNode()` 从 opencli 入口上溯与 PATH 里找真正的 `node.exe`，并支持 `OPENCLI_NODE` 覆盖。
 - **商品图是模特实拍，模型会把参考图 2 里的人当成人物参考**（首跑结果直接换成了商品图模特的脸和车站背景）。修法是在提示词里加 `IDENTITY SOURCE (critical)` 段：明确「参考图 2 里可能有模特，完全忽略她，只取衣服」，约束段补「输出只能有一个人，就是参考图 1 的人」。修复后同一输入出的图身份正确。
 
-## 11. 支付与身份的边界
+## 11. 不走 OpenCLI 的直连解析：淘宝 mtop + 抖音 ttwid（实测：2025-11-22）
+
+**动机**：用户指出「既然小程序不登录也能出图，我们按理也能」。实测确认两家都能直连，不必依赖浏览器；京东 / 拼多多仍需 OpenCLI（裸 HTTP 要登录且无免登录分享数据）。
+
+| 平台 | 直连方式 | 关键点 | 实测 |
+|---|---|---|---|
+| 淘宝 | 登录 cookie + mtop `mtop.taobao.pcdetail.data.get` | 匿名握手**不下发** `_m_h5_tk`、返回 `RGV587_ERROR::SM`；带 cookie 先握手拿 token，再按 `md5(token&t&12574478&data)` 签名重发 | 13 张（main 3 + sku 10），首图 391634B |
+| 抖音商品 | 分享链接 `goods_detail` | 免登录，`img.url_list` 即主图，`ecombdimg.com` 直链稳定可重复下载 | 2 张，2142895B |
+| 抖音视频/图文帖 | `ttwid.bytedance.com/ttwid/union/register/` 取 ttwid → iesdouyin 分享页解析 `window._ROUTER_DATA` 的 `item_list` | **`douyinpic.com` / `sign` 直链基本一次性：同一地址第二次请求直接 403** | 封面 23672B（解析时即取回缓存） |
+
+- Cookie 来源：Chrome 的 `Network\Cookies` 被 Chrome 独占（`esentutl` 报 `JET_errFileAccessDenied -1032`），本机非管理员无法 VSS；改为用户从 DevTools 复制。淘宝 38 项（无 `_m_h5_tk`，握手时现取）、抖音沿用 `C:\Note\video_pipeline\cookies\douyin.netscape.txt`（含 `sessionid`/`ttwid`）。合并写 `data/cookies.json`（已 gitignore），`src/cookies.mjs` 的 `loadCookies` 读取，`TRYON_COOKIE_FILE` 可覆盖。
+- **一次性直链的处理**：抖音视频/图文帖的图片在 `extractDouyinShare` 里就逐个 fetch 取回字节并入内存（UA_M + referer `https://www.douyin.com/`，`content-type` 必须 `image/*`，单张 4KiB–8MiB，一次最多 9 张、累计 24MiB），`download()` 命中 `image.buffer` 时直接返回缓存，不再回源。全部取不到才抛 422「受抖音 CDN 保护…请粘贴商品分享链接」。
+- 抖音图片 CDN 认手机 UA：`download()` 用 `platform.ua ?? UA`，抖音平台表带 `ua: UA_M`。
+- 端到端实测（真实 HTTP）：淘宝分享文案 → 13 图 → 下单 690 分 → 25s success → 结果 1781282B；抖音商品 → 2 图 → 25s success → 1746258B；抖音视频帖 → 1 图 23672B。`node --test` 78/78 通过。
+
+## 12. 支付与身份的边界
 
 - 本轮充值为本地模拟（POST /api/payments + /confirm），真实支付未接入：抖音小程序虚拟支付需要主体资质与 AppID，且虚拟服务支付必须走平台虚拟支付能力，不得引导站外支付。
 - 会话为本地设备标识派生的匿名会话，不是真实鉴权；对外署形态必须换成抖音/微信登录（code2session → openid）并把订单归属绑定到平台用户。

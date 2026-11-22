@@ -95,3 +95,26 @@
 - CSS 中 `img { display:block }` 覆盖了 `hidden` 属性，导致未上传时露出预览占位图 → 加 `[hidden]{display:none!important}`。
 - `createApp` 复杂度 83 → 拆成路由表 + 具名 handler。
 - 验证脚本自身的问题：CDP 复用旧标签页（同一 URL 不触发重载）+ 浏览器实例端口冲突导致复用了上一个浏览器，表现为"订单不落盘、订单列表为空"。改为每次使用独立调试端口、独立 profile 并强制 reload 后，浏览器链路与 curl 链路结果一致。
+
+## 2025-11-22 · 商品链接取图改直连（淘宝 mtop / 抖音 ttwid，不再依赖 OpenCLI）
+
+**输入与决策**：用户要求「用我抖音登录态、不通过 OpenCLI 直接解析」，淘宝同样，抖音「商品 + 视频/图文帖两类都要」。Chrome 的 cookie 库被独占（`esentutl` 报 `JET_errFileAccessDenied -1032`，非管理员），故由用户从 DevTools 复制淘宝 cookie；抖音用 `C:\Note\video_pipeline\cookies\douyin.netscape.txt`。
+
+**变更**
+- 新增 `src/cookies.mjs`（`loadCookies` / `cookieFilePath`，默认 `data/cookies.json`，`TRYON_COOKIE_FILE` 可覆盖）；`.gitignore` 加 `data/cookies.json`；`.env.example` 补 `TRYON_COOKIE_FILE`。
+- `src/source.mjs`：新增 `taobaoDirect`（mtop 握手取 `_m_h5_tk` → md5 签名 → 令牌过期重试 → `deepCollectImages` 递归收 alicdn 图）、`douyinTtwid`/`parseRouterData`/`findItemList`/`extractDouyinShare`（ttwid + iesdouyin `_ROUTER_DATA`）、`deepFindString`；抖音平台表改 label `抖音`、扩 hosts 与 `imageHosts`、`ua: UA_M`；`extract()` 淘宝优先直连、抖音按商品/视频分流；`createSourceService` 新增 `cookies` 选项与 `cookieJar`；`download()` 用 `platform.ua ?? UA`。
+- 抖音视频/图文帖的图片直链一次性（第二次 403），改为解析时逐个取回字节入内存（单张 4KiB–8MiB、最多 9 张、累计 24MiB），`download()` 命中 `image.buffer` 直接返回缓存；全取不到才 422。
+
+**验证**
+- `node --test` 78/78 通过（新增淘宝直连签名、抖音图文帖、抖音视频 403 三条；平台标签断言改 `抖音`；无 OpenCLI 用例补 `cookies:{}`）。
+- 真实 HTTP（`artifacts/probe/probe-direct-http.mjs`）：抖音视频帖 1 图 23672B；抖音商品 2 图 2142895B；抖音商品下单 → 25s success → 结果 1746258B。淘宝分享文案（`artifacts/probe-source-order.mjs`）13 图 → 下单 690 分 → 25s success → 结果 1781282B。
+
+**未验证 / 已知缺口**
+- 淘宝 `descUrl` 详情长图仍被风控挡住（只有轮播/主图/规格图）。
+- 抖音商品 `goods_detail` 只有一张主图；视频/图文帖能拿封面/图集但受 CDN 一次性直链约束（已用缓存规避）。
+- 京东 / 拼多多仍需本机 OpenCLI；1688 未接。
+- 淘宝 cookie 会过期，过期后需用户重新从 DevTools 复制。
+
+**错误与修正**
+- 用 PowerShell `Get-Content -Raw | Set-Content -Encoding utf8` 改含中文的 `src/source.mjs` 导致整份乱码，只能按已读版本用 write 整份重建。此后改文件一律用 edit/write 工具或 `[System.IO.File]` 显式 UTF-8。
+- 抖音图片 CDN 认手机 UA：下载最初用桌面 UA 会 403，改为 `platform.ua`。
