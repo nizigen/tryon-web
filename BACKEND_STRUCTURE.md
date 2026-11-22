@@ -98,11 +98,11 @@ src/errors.mjs        统一错误类型
 | GET | /api/sources/:sourceId/:index | — | 商品图二进制（`no-store`、`nosniff`） |
 
 - 支持淘宝 / 天猫、京东、拼多多、抖音（商城商品 + 视频/图文帖）；`m.tb.cn`、`e.tb.cn`、`p.pinduoduo.com`、`v.douyin.com` 短链先跟随跳转再判定平台，拼多多的 `goods.html?ps=` 也按短链处理。
-- **取图路线**：淘宝用 `data/cookies.json` 里的登录 cookie 调 mtop `pcdetail`（握手取 `_m_h5_tk` 再签名），抖音商品从跳转地址 `goods_detail` 取主图、抖音视频/图文帖用 ttwid 请求 iesdouyin 分享页解析 `_ROUTER_DATA`——这三条都不开浏览器；京东 / 拼多多仍走本机已登录的 OpenCLI。淘宝无 cookie 又无 OpenCLI 时返回 503 `SOURCE_UNAVAILABLE`。
+- **取图路线（四家全部直连，均不开浏览器）**：淘宝用 `data/cookies.json` 里的登录 cookie 调 mtop `pcdetail`（握手取 `_m_h5_tk` 再签名）；抖音商品从跳转地址 `goods_detail` 取主图、抖音视频/图文帖用 ttwid 请求 iesdouyin 分享页解析 `_ROUTER_DATA`；京东读 `item.m.jd.com/product/<sku>.html` 的 `window._itemOnly`（免登录，图片前缀 `https://img14.360buyimg.com/n0/`）；拼多多读 `goods1.html` 的 `window.rawData`（需 pdd cookie，无 cookie 返回 503 提示把 pdd cookie 放进 `data/cookies.json`）。OpenCLI 只在直连失败且本机装有 OpenCLI 时兜底，传 `runCli:null` 可显式禁用。淘宝无 cookie 又无 OpenCLI 时返回 503 `SOURCE_UNAVAILABLE`。
 - **列表只给 `index` 与 `group`，不下发原图直链**，取图必须走 `GET /api/sources/:id/:index`，避免把 CDN 地址与 Referer 规则暴露到前端。
 - 抖音视频/图文帖的图片 CDN 直链基本一次性（第二次请求 403），解析时即把字节取回并入内存（单张 ≤8MiB、最多 9 张、累计 ≤24MiB），`download` 命中缓存直接返回，全部取不到才 422 `NO_IMAGES`。
 - 缓存 30 分钟、最多 20 条，按 TTL 与容量（LRU）淘汰；过期返回 404 `SOURCE_EXPIRED`。
-- 抽取请求串行执行（OpenCLI 共用同一个浏览器会话，直连也复用同一队列），单个请求超时 60 秒，排队超过 4 个返回 429 `TOO_MANY_REQUESTS`。
+- 抽取请求串行执行（复用同一队列；OpenCLI 兜底时才共享浏览器会话），单个请求超时 60 秒，排队超过 4 个返回 429 `TOO_MANY_REQUESTS`。
 - 淘宝直连读 mtop 返回的 `res.item.images` 主图与 `res.skuBase.props[].values[].image` 规格图；OpenCLI 兜底才读 `window.__ICE_APP_CONTEXT__` 内嵌数据，DOM 分组仅作最后兜底（规格图懒加载，DOM 只有 2×2 占位图）。
 - 下载只允许各平台 `imageHosts` 白名单、`redirect:'error'`、限 8MiB、`sniff()` 校验格式，并拒绝小于 4KiB 的占位图；下载与短链正文都用流式读取，超限立即断开，不依赖上游 `content-length`。抖音用手机 UA（`platform.ua`）。
 
@@ -125,5 +125,5 @@ src/errors.mjs        统一错误类型
 - 人像与服装图只在任务内存中流转，不写入订单与磁盘；结果图落盘并按 TTL 清理。
 - 结果图访问使用带时效的 HMAC 票据，不把会话标识放进 URL。
 - 日志与错误消息不含 base64、凭据、完整上游响应体。
-- 商品链接取图不把原图 CDN 直链交给浏览器；服务端按平台白名单 + `redirect:'error'` 代取，避免被当成开放代理。淘宝/抖音直连只用 `data/cookies.json`（git-ignored）里的 cookie，不回传前端；京东/拼多多只读已登录会话的页面 DOM，不导出 cookie。
+- 商品链接取图不把原图 CDN 直链交给浏览器；服务端按平台白名单 + `redirect:'error'` 代取，避免被当成开放代理。淘宝/抖音直连只用 `data/cookies.json`（git-ignored）里的 cookie，不回传前端；京东/拼多多直连只读页面内嵌数据（京东免登录；拼多多用 `data/cookies.json` 的 pdd cookie），不导出 cookie 给前端。
 - 静态资源走白名单 + CSP：`default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`。

@@ -685,6 +685,100 @@ async function taobaoDirect(cookie, id, fetchImpl, signal) {
   return { title: String(title).slice(0, 120), images };
 }
 
+/** 从 HTML 里抠出 `marker = {...}` 之后那个大括号对象，按括号配对截取完整 JSON。 */
+function extractBalancedJson(html, marker) {
+  const at = html.indexOf(marker);
+  if (at < 0) return null;
+  const eq = html.indexOf('=', at + marker.length);
+  if (eq < 0) return null;
+  const start = html.indexOf('{', eq);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < html.length; i += 1) {
+    const ch = html[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return html.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/** 京东手机版商品页：`window._itemOnly.item` 里有主图与规格图，免登录。 */
+async function extractJdDirect(url, fetchImpl, signal) {
+  const sku = jdSku(url);
+  if (!sku) throw new HttpError(400, 'INVALID_URL', '链接里没有京东商品编号', 'url');
+  const response = await fetchImpl(`https://item.m.jd.com/product/${sku}.html`, {
+    signal,
+    headers: { 'user-agent': UA_M, accept: 'text/html' },
+  }).catch(() => null);
+  if (!response?.ok) throw new HttpError(502, 'IMAGE_FETCH_FAILED', '京东页面打不开');
+  const html = await response.text();
+  const raw = extractBalancedJson(html, 'window._itemOnly');
+  if (!raw) throw new HttpError(422, 'NO_IMAGES', '京东页面里没有找到商品数据');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new HttpError(422, 'NO_IMAGES', '京东商品数据解析失败');
+  }
+  const item = parsed?.item ?? {};
+  const paths = [];
+  for (const value of item.image ?? []) if (typeof value === 'string' && value) paths.push(value);
+  for (const variant of item.newColorSize ?? []) {
+    if (typeof variant?.imagePath === 'string' && variant.imagePath) paths.push(variant.imagePath);
+  }
+  const urls = [];
+  for (const path of paths) {
+    const absolute = /^https?:\/\//i.test(path) ? path : `https://img14.360buyimg.com/n0/${path.replace(/^\/+/, '')}`;
+    const normalized = originalImageUrl(absolute, 'jd');
+    if (normalized && !urls.includes(normalized)) urls.push(normalized);
+  }
+  return { title: String(item.skuName ?? '').slice(0, 120), images: urls.map((u) => ({ url: u, group: 'main' })) };
+}
+
+/** 拼多多手机版：`window.rawData.store.initDataObj.goods`，需要登录 cookie（否则 needLogin=true）。 */
+async function extractPddDirect(url, fetchImpl, signal, cookie) {
+  const goods = pddGoodsId(url);
+  if (!goods) throw new HttpError(400, 'INVALID_URL', '链接里没有拼多多商品编号', 'url');
+  const headers = { 'user-agent': UA_M, accept: 'text/html', referer: 'https://mobile.yangkeduo.com/' };
+  if (cookie) headers.cookie = cookie;
+  const response = await fetchImpl(`https://mobile.yangkeduo.com/goods1.html?goods_id=${goods}`, { signal, headers }).catch(() => null);
+  if (!response?.ok) throw new HttpError(502, 'IMAGE_FETCH_FAILED', '拼多多页面打不开');
+  const html = await response.text();
+  const raw = extractBalancedJson(html, 'window.rawData');
+  if (!raw) throw new HttpError(422, 'NO_IMAGES', '拼多多页面里没有找到商品数据');
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new HttpError(422, 'NO_IMAGES', '拼多多商品数据解析失败');
+  }
+  const init = data?.store?.initDataObj ?? {};
+  if (init.needLogin) {
+    throw new HttpError(503, 'SOURCE_UNAVAILABLE', '拼多多需要登录 cookie：请把浏览器里的 pdd cookie 放进 data/cookies.json 的 pdd 字段');
+  }
+  const goodsInfo = init.goods ?? {};
+  const pick = (x) => (typeof x === 'string' ? x : (x && (x.url || x.imgUrl)) || '');
+  const urls = [];
+  const add = (value) => {
+    const normalized = originalImageUrl(pick(value), 'pdd');
+    if (normalized && !urls.includes(normalized)) urls.push(normalized);
+  };
+  for (const it of goodsInfo.topGallery ?? []) add(it);
+  for (const it of goodsInfo.detailGallery ?? []) add(it);
+  for (const it of goodsInfo.skus ?? []) add(it?.thumbUrl);
+  return { title: String(goodsInfo.goodsName ?? '').slice(0, 120), images: urls.map((u) => ({ url: u, group: 'main' })) };
+}
+
 /**
  * 解析商品链接。同一时刻只跑一个解析：OpenCLI 共用一个浏览器会话，并发会互相踩。
  * @param {object} [options]
@@ -693,7 +787,8 @@ async function taobaoDirect(cookie, id, fetchImpl, signal) {
 export function createSourceService({ env = process.env, fetchImpl = fetch, runCli: injected, cookies, settleMs = 8000, ttlMs = 30 * 60 * 1000, max = 20 } = {}) {
   const entry = injected ? null : locateOpenCli(env);
   const nodeBin = injected ? null : locateNode(entry, env);
-  const runCli = injected ?? (entry && nodeBin ? createRunner(entry, nodeBin) : null);
+  // runCli 传 null 表示显式禁用 OpenCLI 兜底（测试用）；不传才去探测本机 OpenCLI。
+  const runCli = injected === null ? null : injected ?? (entry && nodeBin ? createRunner(entry, nodeBin) : null);
   // 测试注入 runCli 时按「测试模式」看待，不读本机真实 cookie，保证测试可重复。
   const cookieJar = cookies ?? (injected !== undefined ? {} : loadCookies(env));
   const sources = new Map();
@@ -729,10 +824,25 @@ export function createSourceService({ env = process.env, fetchImpl = fetch, runC
       }
       return extractTaobao(runCli, id, settleMs, signal);
     }
-    if (!runCli) {
-      throw new HttpError(503, 'SOURCE_UNAVAILABLE', '没有找到 OpenCLI，无法读取商品页；请安装并登录 OpenCLI 后重试');
+    if (platform.id === 'jd') {
+      // 京东手机版商品页把商品数据直接写在 window._itemOnly 里，免登录。
+      try {
+        const direct = await extractJdDirect(url, fetchImpl, signal);
+        if (direct.images.length) return direct;
+      } catch (error) {
+        if (!runCli) throw error;
+      }
+      if (!runCli) throw new HttpError(503, 'SOURCE_UNAVAILABLE', '京东页面没有返回商品数据，且没有 OpenCLI 兜底');
+      return extractJd(runCli, jdSku(url), signal);
     }
-    if (platform.id === 'jd') return extractJd(runCli, jdSku(url), signal);
+    // 拼多多：goods1.html 的 window.rawData 需要登录 cookie，否则 needLogin=true。
+    try {
+      const direct = await extractPddDirect(url, fetchImpl, signal, cookie);
+      if (direct.images.length) return direct;
+    } catch (error) {
+      if (!runCli) throw error;
+    }
+    if (!runCli) throw new HttpError(503, 'SOURCE_UNAVAILABLE', '拼多多需要登录 cookie（放 data/cookies.json 的 pdd 字段）或本机 OpenCLI');
     return extractPdd(runCli, pddGoodsId(url), settleMs, signal);
   }
 

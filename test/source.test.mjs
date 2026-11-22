@@ -78,7 +78,7 @@ test('拼多多链接：读 rawData 的 topGallery / detailGallery / skus', asyn
   assert.deepEqual(source.images.map((image) => image.url), ['https://img.pddpic.com/top.jpeg', 'https://img.pddpic.com/detail.jpeg']);
 });
 
-test('京东链接：走 jd item，main + detail 合并', async () => {
+test('京东链接：直连失败时回退到 jd item，main + detail 合并', async () => {
   const { runCli } = makeRunner({
     jd: {
       title: '测试商品',
@@ -86,10 +86,47 @@ test('京东链接：走 jd item，main + detail 合并', async () => {
       detailImages: ['https://img30.360buyimg.com/sku/jfs/detail.jpg'],
     },
   });
-  const sources = createSourceService({ runCli, settleMs: 0 });
+  const sources = createSourceService({ runCli, settleMs: 0, fetchImpl: async () => { throw new Error('offline'); } });
   const source = await sources.create('https://item.jd.com/100012043978.html');
   assert.equal(source.platform, 'jd');
   assert.deepEqual(source.images.map((image) => image.url), ['https://img10.360buyimg.com/jfs/main.jpg', 'https://img30.360buyimg.com/sku/jfs/detail.jpg']);
+});
+
+test('京东链接：直连手机页解析 window._itemOnly（不需要 OpenCLI）', async () => {
+  const item = {
+    skuName: '直连测试商品',
+    image: ['jfs/t1/a/1/a.jpg', 'jfs/t1/b/2/b.jpg'],
+    newColorSize: [{ imagePath: 'jfs/t1/c/3/c.png' }],
+  };
+  const html = `<script>window._itemOnly = (${JSON.stringify({ item })});</script>`;
+  const sources = createSourceService({ settleMs: 0, runCli: null, cookies: {}, fetchImpl: async () => ({ ok: true, headers: { get: () => 'text/html' }, text: async () => html }) });
+  const source = await sources.create('https://item.jd.com/100012043978.html');
+  assert.equal(source.title, '直连测试商品');
+  assert.deepEqual(source.images.map((image) => image.url), [
+    'https://img14.360buyimg.com/n0/jfs/t1/a/1/a.jpg',
+    'https://img14.360buyimg.com/n0/jfs/t1/b/2/b.jpg',
+    'https://img14.360buyimg.com/n0/jfs/t1/c/3/c.png',
+  ]);
+});
+
+test('拼多多链接：需要登录 cookie 时给出可操作错误', async () => {
+  const html = `<script>window.rawData = ${JSON.stringify({ store: { initDataObj: { needLogin: true } } })};</script>`;
+  const sources = createSourceService({ settleMs: 0, cookies: {}, runCli: null, fetchImpl: async () => ({ ok: true, headers: { get: () => 'text/html' }, text: async () => html }) });
+  await assert.rejects(() => sources.create('https://mobile.yangkeduo.com/goods1.html?goods_id=845720245931'), (error) => error.code === 'SOURCE_UNAVAILABLE' && /pdd cookie/.test(error.message));
+});
+
+test('拼多多链接：带 cookie 直连解析 rawData 的 topGallery/detailGallery', async () => {
+  const goods = {
+    goodsName: '拼多多直连商品',
+    topGallery: [{ url: 'https://img.pddpic.com/a.jpeg?imageMogr2/quality/90' }, { url: 'https://img.pddpic.com/b.jpeg' }],
+    detailGallery: [{ url: 'https://img.pddpic.com/c.jpeg' }],
+    skus: [{ thumbUrl: null }],
+  };
+  const html = `<script>window.rawData = ${JSON.stringify({ store: { initDataObj: { needLogin: false, goods } } })};</script>`;
+  const sources = createSourceService({ settleMs: 0, cookies: { pdd: 'PASS_ID=1' }, fetchImpl: async () => ({ ok: true, headers: { get: () => 'text/html' }, text: async () => html }) });
+  const source = await sources.create('https://mobile.yangkeduo.com/goods1.html?goods_id=845720245931');
+  assert.equal(source.title, '拼多多直连商品');
+  assert.deepEqual(source.images.map((image) => image.url), ['https://img.pddpic.com/a.jpeg', 'https://img.pddpic.com/b.jpeg', 'https://img.pddpic.com/c.jpeg']);
 });
 
 test('不支持的平台与缺少商品 ID 都被拒绝', async () => {

@@ -30,9 +30,9 @@
 - 混元 / MiniMax 未做真实生成验证；混元成本为估值。
 - 隐式 AI 标识与"外套保留内搭"的真实生成未验证。
 - 小程序端代码未写（本仓库交付 H5 与后端 API，小程序需另建工程并复用同一套 REST 接口）。
-- 商品链接导入：淘宝走登录 cookie + mtop 直连、抖音走分享数据 + ttwid 直连（均不开浏览器），京东 / 拼多多仍靠本机已登录的 OpenCLI，因此京东/拼多多不是可独立部署的服务端能力。
+- 商品链接导入：四家全部服务端直连、不开浏览器——淘宝 = 登录 cookie + mtop、抖音 = 分享数据 + ttwid、京东 = 手机版详情页 `window._itemOnly`（免登录）、拼多多 = `goods1.html` 的 `window.rawData`（需 pdd cookie）。OpenCLI 仅作直连失败时的可选兜底（`runCli:null` 可禁用），因此不装 OpenCLI 的机器也能取图。
 - 抖音商城商品分享只带一张主图（`goods_detail`）；抖音视频/图文帖能拿封面/图集，但图片 CDN 直链一次性，已在解析时缓存规避。1688 未接。
-- 淘宝 cookie（`data/cookies.json`）会过期，过期后需用户重新从 DevTools 复制；无 cookie 且无 OpenCLI 时淘宝返回 503。
+- 淘宝与拼多多 cookie（`data/cookies.json`）会过期，过期后需用户重新从 DevTools 复制；淘宝无 cookie 且无 OpenCLI 时返回 503，拼多多无 pdd cookie 时返回 503 提示补充 cookie。拼多多真实出图尚未用真实 pdd cookie 验证。
 - 淘宝详情长图（`descUrl`）被风控挡住，当前只有轮播图、主图与规格图。
 - 浏览器内文件上传受 OpenCLI `upload` 限制未打通，出图证据走接口链路。
 - 容器内安装了 chromium 仅用于本次 UI 验证，用户 Windows 机器上的 OpenCLI 通道可复跑同一流程。

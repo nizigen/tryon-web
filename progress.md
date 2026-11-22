@@ -118,3 +118,25 @@
 **错误与修正**
 - 用 PowerShell `Get-Content -Raw | Set-Content -Encoding utf8` 改含中文的 `src/source.mjs` 导致整份乱码，只能按已读版本用 write 整份重建。此后改文件一律用 edit/write 工具或 `[System.IO.File]` 显式 UTF-8。
 - 抖音图片 CDN 认手机 UA：下载最初用桌面 UA 会 403，改为 `platform.ua`。
+
+## 2025-11-22 · 京东 / 拼多多也改直连，彻底不依赖 OpenCLI
+
+**输入与决策**
+- 用户要求「拼多多和京东不能用同样的方式来完成不要用 opencli 了？我还要给别人用别人不一定有 opencli」。据此把京东、拼多多也改为服务端直连，OpenCLI 降级为「直连失败时的可选兜底」，`runCli:null` 可完全禁用。
+
+**变更**
+- `src/source.mjs` 新增 `extractBalancedJson(html, marker)`（marker → 其后 `=` → 其后 `{`，按字符串/转义/括号配对截取 JSON）、`extractJdDirect`（`item.m.jd.com/product/<sku>.html` 的 `window._itemOnly`，图片拼 `https://img14.360buyimg.com/n0/`）、`extractPddDirect`（`goods1.html` 的 `window.rawData.store.initDataObj`，`needLogin` 时返回 503 并提示把 pdd cookie 放进 `data/cookies.json`）。
+- `extract()` 京东 / 拼多多改为「先直连，失败且无 OpenCLI 兜底才抛」；`createSourceService` 的 `runCli` 支持传 `null` 显式禁用兜底。
+
+**验证**
+- `node --test` 81/81 通过（新增京东直连 `window._itemOnly`、拼多多 needLogin 可操作错误、拼多多带 cookie 解析 rawData 三条；京东回退用例注入离线 `fetchImpl` 强制走 OpenCLI 分支）。
+- 真实网络（`runCli:null` 完全禁用 OpenCLI）：京东 `https://item.jd.com/100012043978.html` → 10 图 0.4s、首图 107439B；拼多多 `goods1.html?goods_id=845720245931` → `SOURCE_UNAVAILABLE`「拼多多需要登录 cookie…」（本机无 pdd cookie，符合预期）。
+- 真实 HTTP 全链路：`artifacts/probe/probe-jd-http.mjs` → `POST /api/sources` 201（京东 10 图）→ 取图 200 image/jpeg 107439B → 下单 690 分 → 轮询 5–25s running → 25s success → 结果 200 image/png 1500318B。服务重启后 `POST /api/sources` 淘宝 13 图 8.1s、抖音 2 图 0.2s。
+
+**未验证 / 已知缺口**
+- 拼多多真实出图未验证（本机没有 pdd 登录 cookie；代码路径用构造 HTML 覆盖测试）。用户提供 pdd cookie 后可直接验证。
+- 淘宝详情长图仍受风控；抖音商品只有一张主图（同前）。
+
+**错误与修正**
+- 拼多多无 cookie 时最初报「页面里没有找到商品数据」，因为 `extractBalancedJson` 的 marker 写死了 `window.rawData =`（带空格）。改为 marker `window.rawData` + 找 `=` 再找 `{` 后，能正确识别 `needLogin:true` 并给出可操作错误。
+- 全仓 `node --test` 与我并行的真实网络 `node -e` 同时跑时会 flaky（会话并发、充值断言），单独或连续两次均全绿，属并行负载时序。

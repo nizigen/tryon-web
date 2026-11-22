@@ -165,8 +165,8 @@ export function renderImport(root, ctx) {
       h('p', { class: 'hero__text', text: '把商品链接粘进来——手机分享出来的整段文案也行，我们读取那件衣服的原图，再穿到你身上。' }),
       h('div', { class: 'hero__meta' }, [
         h('span', { class: 'tag tag--accent', text: '支持手机分享短链' }),
-        h('span', { class: 'tag', text: '淘宝 / 抖音免开浏览器' }),
-        h('span', { class: 'tag', text: '京东 / 拼多多需本机登录' }),
+        h('span', { class: 'tag', text: '四家都直连，不用开浏览器' }),
+        h('span', { class: 'tag', text: '拼多多需登录 cookie' }),
       ]),
     ]),
     h('div', { class: 'card import' }, [

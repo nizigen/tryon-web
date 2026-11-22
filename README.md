@@ -18,16 +18,16 @@ node --env-file-if-exists=.env server.mjs
 # http://127.0.0.1:43130
 ```
 
-需要本机 the image service 在运行（提供图片模型与凭据）。导入商品链接：**淘宝 / 抖音商城 / 抖音视频与图文帖走直连 HTTP**（淘宝用粘贴进来的登录 cookie 调 mtop，抖音用分享链接里的数据与 ttwid，都不需要开浏览器）；**京东 / 拼多多仍走本机已登录的 OpenCLI**。淘宝 cookie 与抖音 cookie 放在 `data/cookies.json`（JSON：`{"taobao":"...","douyin":"..."}`，已被 `.gitignore` 忽略），也可以直接用 `TRYON_COOKIE_FILE` 指到别处。可用环境变量：
+需要本机 the image service 在运行（提供图片模型与凭据）。导入商品链接**四家都直连 HTTP，不需要浏览器**：淘宝用粘贴进来的登录 cookie 调 mtop；抖音用分享链接里的数据与 ttwid；京东读手机版详情页内嵌数据（免登录）；拼多多读 `goods1.html` 的内嵌数据（需要拼多多登录 cookie）。cookie 放在 `data/cookies.json`（JSON：`{"taobao":"...","douyin":"...","pdd":"..."}`，已被 `.gitignore` 忽略），也可以直接用 `TRYON_COOKIE_FILE` 指到别处。**本机若装有 OpenCLI，只在直连失败时作为兜底**，没有 OpenCLI 也能正常取图。可用环境变量：
 
 | 变量 | 作用 |
 | --- | --- |
 | `IMAGE_API_BASE_URL` | 覆盖 the image service 网关地址（默认读 `the configured API base URL`，文件不存在时回退 3425） |
 | `IMAGE_API_MCP_PATH` | 图片 MCP 路径，默认 `/v1/images` |
 | `PUBLIC_ORIGIN` | 对外部署形态下允许的站点来源；本机默认只允许回环 |
-| `TRYON_COOKIE_FILE` | 淘宝 / 抖音 cookie 文件路径（默认 `data/cookies.json`） |
-| `OPENCLI_ENTRY` | 覆盖 OpenCLI 入口脚本路径（默认在 PATH 里找 `node_modules/@jackwener/opencli/dist/src/main.js`），仅京东 / 拼多多需要 |
-| `OPENCLI_NODE` | 覆盖执行 OpenCLI 的 node 可执行文件（默认自动探测，用于避开 Electron 宿主 exe），仅京东 / 拼多多需要 |
+| `TRYON_COOKIE_FILE` | 淘宝 / 抖音 / 拼多多 cookie 文件路径（默认 `data/cookies.json`） |
+| `OPENCLI_ENTRY` | 覆盖 OpenCLI 入口脚本路径（默认在 PATH 里找 `node_modules/@jackwener/opencli/dist/src/main.js`），仅作为直连失败时的兜底 |
+| `OPENCLI_NODE` | 覆盖执行 OpenCLI 的 node 可执行文件（默认自动探测，用于避开 Electron 宿主 exe），仅作为直连失败时的兜底 |
 
 ## 目录
 
@@ -54,7 +54,7 @@ node --test
 - 真实支付与真实登录：充值为本地模拟，会话是匿名设备标识。抖音小程序虚拟支付需要主体资质与 AppID，接入前不能对外收款。
 - 平台形态：抖音小程序（另建工程，复用本仓库 REST 接口）+ H5；首版不做原生 App。
 - **抖音商城只出主图**：分享链接的 `goods_detail` 只带一张主图（1440×1440），H5 详情页对浏览器一律风控，App 内的图集拿不到。抖音视频/图文帖走 ttwid + `_ROUTER_DATA`，能拿到封面/图集（一次性的 CDN 直链在解析时即取回缓存）。1688 需登录态，当前未接。
-- 京东 / 拼多多取图依赖本机已登录的 OpenCLI，不是服务端独立能力；淘宝与抖音是直连 HTTP，不依赖浏览器，但淘宝需要 `data/cookies.json` 里的登录 cookie（过期后需重新粘贴）。
+- 四家取图都是服务端直连，不依赖浏览器、也不依赖本机 OpenCLI：京东免登录即可；淘宝需要 `data/cookies.json` 里的登录 cookie，拼多多需要 `pdd` 字段的登录 cookie（过期后需重新粘贴），抖音商品链接免登录。
 - 提示词为本项目自建（原扩展服务端模板不可得），不保证像素级保真。
 - 结果图默认 24 小时后清理；人像照片不落盘。
 
