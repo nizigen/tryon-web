@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { h, toast } from '../lib/dom.js';
 
-const PLATFORM_HINT = '支持淘宝 / 天猫、京东、拼多多、抖音商城；手机分享出来的整段文案可以直接粘贴。';
+const PLATFORM_HINT = '支持淘宝 / 天猫、京东、拼多多、抖音（商品与视频/图文帖）；手机分享出来的整段文案可以直接粘贴。';
 
 /** 粘贴商品链接 → 解析出商品图 → 选一张、选分类 → 进入试穿。 */
 export function renderImport(root, ctx) {
@@ -165,8 +165,8 @@ export function renderImport(root, ctx) {
       h('p', { class: 'hero__text', text: '把商品链接粘进来——手机分享出来的整段文案也行，我们读取那件衣服的原图，再穿到你身上。' }),
       h('div', { class: 'hero__meta' }, [
         h('span', { class: 'tag tag--accent', text: '支持手机分享短链' }),
-        h('span', { class: 'tag', text: '抖音商城只出主图' }),
-        h('span', { class: 'tag', text: '需要本机已登录对应平台' }),
+        h('span', { class: 'tag', text: '淘宝 / 抖音免开浏览器' }),
+        h('span', { class: 'tag', text: '京东 / 拼多多需本机登录' }),
       ]),
     ]),
     h('div', { class: 'card import' }, [
