@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { HttpError } from './errors.mjs';
 import { generateImage, listModels, deadline } from './the image service.mjs';
-import { buildTryonPrompt, CATEGORIES, FITS, GARMENT_TYPES, isCategory, isGarmentType } from './prompt.mjs';
+import { buildTryonPrompt, CATEGORIES, FITS, GARMENT_TYPES, isCategory, isGarmentType, sanitizeText } from './prompt.mjs';
 import { priceCatalog, resolveTier } from './pricing.mjs';
 import { assertString, decodeImage, MAX_BODY_BYTES, MAX_IMAGE_BYTES, MAX_PROMPT_CHARS, sniff } from './validate.mjs';
 
@@ -248,7 +248,9 @@ function resolveOrderInput(context, input) {
   if (typeof extra !== 'string' || [...extra.trim()].length > MAX_PROMPT_CHARS) {
     throw new HttpError(400, 'INVALID_REQUEST', '补充要求不得超过500个字符', 'prompt');
   }
-  return { product, category, garmentType, extra: extra.trim() };
+  // 商品名会进提示词，外部商品标题属于不可信输入：单行化并限长。
+  const sourceName = input?.sourceName === undefined ? '' : sanitizeText(input.sourceName, 80);
+  return { product, category, garmentType, extra: extra.trim(), sourceName };
 }
 
 /** 目录商品图转成已校验的 data URL，与上传路径走同一套校验与下发方式。 */
@@ -264,28 +266,43 @@ async function catalogImageDataUrl(product) {
 }
 
 async function handleOrderCreate(context) {
-  const { response, request, store, tryon, env, fetchImpl, clock } = context;
+  const { response, request, store, tryon, sources, env, fetchImpl, clock } = context;
   const input = await readJsonBody(request, clock.signal);
   const sessionId = assertString(input?.sessionId, 'sessionId', { max: 64 });
   const session = store.getSession(sessionId);
   if (!session) throw new HttpError(404, 'SESSION_NOT_FOUND', '会话不存在或已失效');
-  const { product, category, garmentType, extra } = resolveOrderInput(context, input);
+  const { product, category, garmentType, extra, sourceName } = resolveOrderInput(context, input);
   const model = assertString(input?.model, 'model', { max: 120 });
   const models = await listModels(env, fetchImpl, clock.signal);
   if (!models.includes(model)) throw new HttpError(400, 'MODEL_UNAVAILABLE', '所选模型已不可用，请重新加载配置', 'model');
   const tier = resolveTier(model, input?.tier);
   decodeImage(input?.person, 'person');
-  const garment = product ? await catalogImageDataUrl(product) : (decodeImage(input?.garment, 'garment'), input.garment);
+  // 服装图三种来源：目录商品、外部链接导入的商品图、直传。都收敛成已校验的 data URL。
+  let garment;
+  if (product) {
+    garment = await catalogImageDataUrl(product);
+  } else if (input?.sourceId !== undefined) {
+    const sourceId = assertString(input.sourceId, 'sourceId', { max: 64 });
+    const sourceIndex = input.sourceIndex ?? 0;
+    if (!Number.isInteger(sourceIndex) || sourceIndex < 0) {
+      throw new HttpError(400, 'INVALID_REQUEST', '商品图序号不合法', 'sourceIndex');
+    }
+    garment = (await sources.dataUrl(sourceId, sourceIndex, clock.signal)).dataUrl;
+  } else {
+    decodeImage(input?.garment, 'garment');
+    garment = input.garment;
+  }
   // 先占位再扣费：占位失败不扣钱；扣费后任何异常都全额退回。
   tryon.reserve(sessionId);
   if (session.balanceCents < tier.priceCents) {
     tryon.release(sessionId);
     throw new HttpError(402, 'INSUFFICIENT_BALANCE', `余额不足，还差 ${tier.priceCents - session.balanceCents} 分`, 'balance');
   }
+  const garmentLabel = product ? `${product.name}（${product.subtitle ?? ''}）` : sourceName;
   const prompt = buildTryonPrompt({
     category,
     garmentType,
-    garmentName: product ? `${product.name}（${product.subtitle ?? ''}）` : '',
+    garmentName: garmentLabel,
     fit: input?.fit ?? 'regular',
     extra,
   });
@@ -294,7 +311,7 @@ async function handleOrderCreate(context) {
     const order = await store.createOrder({
       sessionId,
       productId: product?.id ?? null,
-      productName: product?.name ?? '自定义试穿',
+      productName: product?.name ?? (sourceName || '自定义试穿'),
       model,
       tier: tier.tier,
       quality: tier.quality,
@@ -434,6 +451,33 @@ async function handleTryon(context) {
   });
 }
 
+async function handleSourceCreate(context) {
+  const { response, request, sources, clock } = context;
+  const input = await readJsonBody(request, clock.signal);
+  const source = await sources.create(input?.url, clock.signal);
+  sendJson(response, 201, {
+    source: {
+      id: source.id,
+      platform: source.platform,
+      platformLabel: source.platformLabel,
+      title: source.title,
+      images: source.images.map((image, index) => ({ index, group: image.group })),
+    },
+  });
+}
+
+async function handleSourceImage(context) {
+  const { response, sources, sourceId, index, clock } = context;
+  const { mime, buffer } = await sources.download(sourceId, index, clock.signal);
+  response.writeHead(200, {
+    'content-type': mime,
+    'content-length': buffer.length,
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
+  response.end(buffer);
+}
+
 async function handleResult(context) {
   const { response, url, file, resultsDir } = context;
   const token = url.searchParams.get('k') ?? '';
@@ -461,6 +505,8 @@ const ROUTES = [
   { method: 'GET', pattern: /^\/api\/jobs\/(?<jobId>[^/]+)$/, handler: handleJob },
   { method: 'POST', pattern: /^\/api\/payments$/, handler: handlePaymentCreate },
   { method: 'POST', pattern: /^\/api\/payments\/(?<paymentId>[^/]+)\/confirm$/, handler: handlePaymentConfirm },
+  { method: 'POST', pattern: /^\/api\/sources$/, handler: handleSourceCreate },
+  { method: 'GET', pattern: /^\/api\/sources\/(?<sourceId>[^/]+)\/(?<index>\d+)$/, handler: handleSourceImage },
   { method: 'POST', pattern: /^\/api\/tryon$/, handler: handleTryon },
   { method: 'GET', pattern: /^\/api\/results\/(?<file>[^/]+)$/, handler: handleResult },
 ];
@@ -475,7 +521,7 @@ function matchRoute(method, pathname) {
   return null;
 }
 
-export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, timeoutMs = 120_000, resultsDir = RESULTS_DIR }) {
+export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, sources, timeoutMs = 120_000, resultsDir = RESULTS_DIR }) {
   // 本机默认开放模拟充值与直连生成；一旦配置对外来源（部署形态）默认关闭，必须显式开启。
   const allowSimulation = env.ENABLE_SIMULATED_PAYMENTS === '1' || !env.PUBLIC_ORIGIN;
   const app = createServer(async (request, response) => {
@@ -505,6 +551,7 @@ export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, 
         fetchImpl,
         store,
         tryon,
+        sources,
         clock,
         timeoutMs,
         allowSimulation,

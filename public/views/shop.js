@@ -103,6 +103,13 @@ export function renderShop(root, ctx) {
       ]),
     ]),
     h('div', { class: 'search' }, [search]),
+    h('div', { class: 'import-cta' }, [
+      h('div', {}, [
+        h('p', { class: 'import-cta__title', text: '想试别的衣服？' }),
+        h('p', { class: 'import-cta__text', text: '粘贴淘宝、京东、拼多多、抖音商城的商品链接，直接用那件衣服试穿。' }),
+      ]),
+      h('button', { type: 'button', class: 'btn btn--sm', text: '导入商品链接', onclick: () => ctx.onOpenImport() }),
+    ]),
     chips,
     grid,
   );

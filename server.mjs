@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createApp } from './src/app.mjs';
+import { createSourceService } from './src/source.mjs';
 import { createStore } from './src/store.mjs';
 import { createTryonService } from './src/tryon.mjs';
 
@@ -19,8 +20,9 @@ export async function bootstrap(env = process.env, { fetchImpl = fetch } = {}) {
   // 进程重启后内存任务丢失，磁盘上仍是 pending 的订单必须退回余额。
   const interrupted = await tryon.reconcileInterruptedOrders();
   if (interrupted > 0) console.error(`reconciled ${interrupted} interrupted order(s), balance refunded`);
-  const app = createApp({ env, fetchImpl, store, tryon });
-  return { app, store, tryon };
+  const sources = createSourceService({ env, fetchImpl });
+  const app = createApp({ env, fetchImpl, store, tryon, sources });
+  return { app, store, tryon, sources };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

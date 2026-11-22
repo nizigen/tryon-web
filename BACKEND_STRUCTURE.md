@@ -8,6 +8,7 @@ src/app.mjs           HTTP 路由、中间件、静态资源、结果票据
 src/the image service.mjs        网关发现、模型目录、generate_image + pending 轮询
 src/prompt.mjs        服装分类体系与结构化提示词
 src/pricing.mjs       按模型/档位的定价表与成本估算
+src/source.mjs        商品链接取图：平台识别、短链跟随、OpenCLI 抽取、TTL 缓存
 src/store.mjs         JSON 持久化（商品、会话、订单、充值单）
 src/tryon.mjs         试穿任务编排（占位→扣费→生成→扣减/退回）
 src/validate.mjs      图片/字段校验与限额
@@ -80,7 +81,7 @@ src/errors.mjs        统一错误类型
 | GET | /api/products/:id | — | `{ product: Product }` |
 | POST | /api/session | `{ deviceId }` | `{ sessionId, balanceCents, packs }` |
 | GET | /api/session/:id | — | `{ sessionId, balanceCents, packs }` |
-| POST | /api/orders | `{ sessionId, productId?, model, tier, category?, garmentType?, fit?, prompt?, person, garment? }` | `{ orderId, jobId, priceCents, balanceCents }` |
+| POST | /api/orders | `{ sessionId, productId?, sourceId?, sourceIndex?, sourceName?, model, tier, category?, garmentType?, fit?, prompt?, person, garment? }` | `{ orderId, jobId, priceCents, balanceCents }` |
 | GET | /api/orders | `x-session-id` | `{ orders:[Order] }`（含 jobId，不含 costCents） |
 | GET | /api/orders/:id | `x-session-id` | `{ order:Order, resultToken }` |
 | GET | /api/jobs/:id | — | `{ jobId, orderId, status, stage, error?, updatedAt }` |
@@ -88,6 +89,21 @@ src/errors.mjs        统一错误类型
 | POST | /api/payments | `{ sessionId, packId }` | `{ paymentId, amountCents, status:"pending", channels:[], notice }`（**本地模拟**，部署形态默认关闭） |
 | POST | /api/payments/:id/confirm | `{ sessionId }` | `{ paymentId, status:"paid", balanceCents }`（**本地模拟**） |
 | POST | /api/tryon | `{ model, person, garment, category, garmentType?, tier?, prompt? }` | 同步生成结果（兼容/本地直连；部署形态默认关闭） |
+
+### 商品链接取图（src/source.mjs）
+
+| 方法 | 路径 | 入参 | 出参 |
+| --- | --- | --- | --- |
+| POST | /api/sources | `{ url }`——完整商品链接，或手机分享出来的整段文案 | `{ source:{ id, platform, platformLabel, title, images:[{index, group}] } }` |
+| GET | /api/sources/:sourceId/:index | — | 商品图二进制（`no-store`、`nosniff`） |
+
+- 支持淘宝 / 天猫、京东、拼多多、抖音商城；`m.tb.cn`、`e.tb.cn`、`p.pinduoduo.com`、`v.douyin.com` 短链先跟随跳转再判定平台，拼多多的 `goods.html?ps=` 也按短链处理。抖音商城只从跳转地址的 `goods_detail` 取图（H5 详情页对浏览器风控），因此只有主图。
+- **列表只给 `index` 与 `group`，不下发原图直链**，取图必须走 `GET /api/sources/:id/:index`，避免把 CDN 地址与 Referer 规则暴露到前端。
+- 读取走本机已登录的 OpenCLI；未安装或未登录返回 503 `SOURCE_UNAVAILABLE`，读不到图返回 422 `NO_IMAGES`。
+- 缓存 30 分钟、最多 20 条，按 TTL 与容量淘汰；过期返回 404 `SOURCE_EXPIRED`。
+- 抽取请求串行执行（OpenCLI 共用同一个浏览器会话，并发会互相踩），单个请求超时 60 秒，排队超过 4 个返回 429 `TOO_MANY_REQUESTS`。
+- 淘宝读 `window.__ICE_APP_CONTEXT__.loaderData.home.data.res` 的内嵌数据（`res.item.images` 主图 + `res.skuBase.props[].values[].image` 规格图），不读 DOM：规格图懒加载，未滚进视口的 `img.src` 是 2×2 占位图，从 DOM 只能拿到 4 张。
+- 下载只允许各平台 `imageHosts` 白名单、`redirect:'error'`、限 8MiB、`sniff()` 校验格式，并拒绝小于 4KiB 的占位图；下载与短链正文都用流式读取，超限立即断开，不依赖上游 `content-length`。
 
 ## 校验与限额
 
@@ -98,6 +114,7 @@ src/errors.mjs        统一错误类型
 - `category` 白名单 tops/bottoms/dresses；`garmentType` 必须属于该 category。
 - 模型必须出现在当前 `tools/list` 目录中；档位必须属于该模型，否则 400。
 - 并发：同一会话同时只允许一个进行中任务（409）。
+- 商品链接：只接受 http/https，主机必须在平台白名单内；最多 40 张图；外部商品标题按不可信文本截断到 80 码点后才进提示词。
 
 ## 安全
 
@@ -107,4 +124,5 @@ src/errors.mjs        统一错误类型
 - 人像与服装图只在任务内存中流转，不写入订单与磁盘；结果图落盘并按 TTL 清理。
 - 结果图访问使用带时效的 HMAC 票据，不把会话标识放进 URL。
 - 日志与错误消息不含 base64、凭据、完整上游响应体。
+- 商品链接取图不把原图 CDN 直链交给浏览器；服务端按平台白名单 + `redirect:'error'` 代取，避免被当成开放代理。抽取只读取当前已登录会话的页面 DOM，不导出 cookie，也不把页面内容回传给前端。
 - 静态资源走白名单 + CSP：`default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`。

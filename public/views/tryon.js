@@ -13,6 +13,7 @@ const STAGE_TEXT = {
   failed: '生成失败',
 };
 
+/** 目录商品：分类与子类由目录决定，价格来自目录。 */
 export function renderTryon(root, ctx, productId) {
   const product = ctx.products.find((item) => item.id === productId);
   if (!product) {
@@ -22,7 +23,48 @@ export function renderTryon(root, ctx, productId) {
     ]));
     return;
   }
+  renderSubject(root, ctx, {
+    title: product.name,
+    subtitle: product.subtitle ?? '',
+    tags: product.tags ?? [],
+    imageUrl: `/${product.image}`,
+    badge: 'AI 生成商品图',
+    priceText: money(product.priceCents),
+    category: product.category,
+    garmentType: product.garmentType,
+  }, { productId: product.id });
+}
 
+/** 链接导入的商品：分类与子类由用户在导入页选，价格未知。 */
+export function renderSourceTryon(root, ctx) {
+  const imported = ctx.importedSource;
+  if (!imported) {
+    root.append(h('div', { class: 'empty' }, [
+      h('p', { class: 'empty__title', text: '还没有导入商品' }),
+      h('p', { text: '粘贴淘宝、京东或拼多多的商品链接，就能用那件衣服试穿。' }),
+      h('button', { type: 'button', class: 'btn btn--primary', text: '去导入商品链接', onclick: () => ctx.onNavigate('import') }),
+    ]));
+    return;
+  }
+  renderSubject(root, ctx, {
+    title: imported.title,
+    subtitle: `${imported.platformLabel} · 链接导入`,
+    tags: [],
+    imageUrl: `/api/sources/${imported.id}/${imported.imageIndex}`,
+    badge: '外部商品图',
+    priceText: '价格以商品页为准',
+    category: imported.category,
+    garmentType: imported.garmentType,
+  }, {
+    sourceId: imported.id,
+    sourceIndex: imported.imageIndex,
+    sourceName: imported.title,
+    category: imported.category,
+    garmentType: imported.garmentType,
+  });
+}
+
+function renderSubject(root, ctx, subject, orderTarget) {
   const state = {
     model: ctx.config.defaultModel ?? ctx.config.models[0]?.id ?? null,
     tier: ctx.config.defaultTier ?? ctx.config.models[0]?.tiers[0]?.id ?? null,
@@ -163,7 +205,7 @@ export function renderTryon(root, ctx, productId) {
     }
     const resultUrl = `/api/results/${order.resultFile}?k=${encodeURIComponent(order.resultToken ?? '')}`;
     const canvas = h('div', { class: 'canvas' }, [
-      h('img', { src: resultUrl, alt: `${product.name} 的试穿效果`, loading: 'lazy' }),
+      h('img', { src: resultUrl, alt: `${subject.title} 的试穿效果`, loading: 'lazy' }),
     ]);
     resultBody.append(
       h('div', { class: 'result__head' }, [
@@ -181,20 +223,20 @@ export function renderTryon(root, ctx, productId) {
         h('a', {
           class: 'btn btn--block',
           href: resultUrl,
-          download: `${product.name}-试穿效果-AI生成.jpg`,
+          download: `${subject.title}-试穿效果-AI生成.jpg`,
           text: '下载效果图（含 AI 标识）',
         }),
       ]),
     );
     const bar = resultBody.querySelector('.hotspot-bar');
-    const regions = regionsFor(product.category);
+    const regions = regionsFor(subject.category);
     const hotspots = createHotspots(canvas, {
       regions,
       onChange: (regionId) => {
         for (const button of bar.children) button.classList.toggle('is-active', button.dataset.region === regionId);
       },
     });
-    hotspots.setGarment(`/${product.image}`, product.name);
+    hotspots.setGarment(subject.imageUrl, subject.title);
     for (const region of regions) {
       bar.append(h('button', {
         type: 'button',
@@ -262,11 +304,11 @@ export function renderTryon(root, ctx, productId) {
         method: 'POST',
         body: {
           sessionId: getSessionId(),
-          productId: product.id,
+          ...orderTarget,
           model: state.model,
           tier: tier.id,
-          category: product.category,
-          garmentType: product.garmentType,
+          category: subject.category,
+          garmentType: subject.garmentType,
           fit: state.fit,
           prompt: state.prompt.trim(),
           person: state.person,
@@ -330,12 +372,13 @@ export function renderTryon(root, ctx, productId) {
     h('div', { class: 'tryon' }, [
       h('div', { class: 'tryon__left' }, [
         h('div', { class: 'card tryon__product' }, [
-          h('img', { src: `/${product.image}`, alt: product.name }),
+          h('img', { src: subject.imageUrl, alt: subject.title }),
           h('div', {}, [
-            h('h2', { text: product.name }),
-            h('p', { text: product.subtitle ?? '' }),
-            h('div', { class: 'tryon__tags' }, (product.tags ?? []).map((tag) => h('span', { class: 'tag', text: tag }))),
-            h('p', { class: 'product__price', text: money(product.priceCents) }),
+            h('h2', { text: subject.title }),
+            h('p', { text: subject.subtitle }),
+            subject.tags.length > 0 ? h('div', { class: 'tryon__tags' }, subject.tags.map((tag) => h('span', { class: 'tag', text: tag }))) : null,
+            h('p', { class: 'product__price', text: subject.priceText }),
+            h('span', { class: 'product__badge product__badge--inline', text: subject.badge }),
           ]),
         ]),
         h('div', { class: 'card form' }, [

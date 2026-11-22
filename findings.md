@@ -79,9 +79,92 @@
 
 - 桌面端 hover、移动端 click 命中上身/下身/全身热区时，在该区域叠加显示当前商品图（不触发新的生成，也不产生费用）。
 - 修正过一次真实缺陷：初版对所有分类都开放三个热区，导致上衣商品在下半身也叠加出上衣；现按商品分类限制热区（上衣→上身/全身，下装→下身/全身，连衣裙→全部）。
-- 证据：docs/evidence/ui-hotspot-390.png、ui-hotspot-lower-390.png。
+- 证据：docs/evidence/ui-hotspot-390.png（上身）、ui-hotspot-full-390.png（全身）。
 
-## 7. 支付与身份的边界
+## 7. 本机 ComfyUI / FASHN VTON v1.5 实测（2025-11-22）
+
+**环境**：`D:\AI\ComfyUI`（ComfyUI 0.46.0，独立 venv，torch 2.11.0+cu128），RTX 5060 Laptop 8GB（Blackwell sm_120）。节点插件 `ComfyUI-FASHN-VTON` v1.1.0。权重 `models/fashn-vton/`（model.safetensors 1.94GB + DWPose 两个 ONNX），人体解析器 `fashn-ai/fashn-human-parser` 已预热到 HF 缓存。
+
+**实测数据**：tops / bottoms / one-pieces 三类各跑通一次，30 步、cfg 1.5，单张 55–79s，稳定 1.65–1.88 s/步，显存峰值 4915MB / 8151MB，输出固定 576×864。同 seed 可复现。
+
+**两个必须记住的约束**
+
+1. **bottoms 是"叠加"不是"替换"**：给穿牛仔裤的人像 + 短裙平铺图，模型把裙子画在牛仔裤外侧（裙摆下仍露牛仔腿）。像素差分证明"已穿长裤的人像 + 同款裙子重跑"输出与上一次逐像素相同（max diff 11，改动像素 0）——模型判定裙子已存在，直接不改。换成穿短裤的底图后正常替换。连衣裙（one-pieces）同理：不脱原下装。
+2. **`ALL_PROXY=socks5://…` 会让 huggingface_hub 抛 `ImportError: Using SOCKS proxy, but the 'socksio' package is not installed`**；跑 python 前清掉 `ALL_PROXY`（保留 HTTP(S)_PROXY）即可。
+
+**与 the image service `codex/gpt-image-2` 的分工**：FASHN 本地零边际成本、版型/褶皱/印花还原更接近实拍、确定性可复现，但分辨率 576×864、手部细节弱、下装只能叠加；the image service 一次多参考即可同时换上下装并保持人物，1024×1536，但按次计费。**结论：多件搭配（整套 JK、连衣裙换长裤）走 the image service；单件替换走 FASHN 更划算。**
+
+**证据**：`docs/evidence/comfyui-vs-the image service.png`（单件三分类对比）、`docs/evidence/jk-comparison.png`（原图 / FASHN 两件套 / the image service 一次成图）。
+
+**未验证**：DWPose 因 onnxruntime 缺 `cublasLt64_13.dll`（需 CUDA 13）回落 CPU 推理，姿态估计未走 GPU；真实用户照片（侧身、逆光、多人）未测；显存上限只在 8GB 卡验证。
+
+## 8. 真实商品来源：火星institute JK 上身实测（2025-11-22）
+
+**数据来源已打通**：淘宝登录态下 `s.taobao.com/search?q=火星institute+jk` 可正常渲染（127 张图），商品卡片在 `a[href*="item"]` 上带 item id 与标题，可直接取到真实在售价与店铺（火星institute JK制服馆，appUid `RAzN8HWK1fi1WBpJVjZufon4eefDRQVLGH4Kv55DY7y2fJyJbdc`，广东汕尾）。同款商品图从 1688 同源 CDN（`cbu01.alicdn.com/img/ibank/...-cib.jpg`）可直接下载，需带浏览器 UA 与 Referer，无需登录。
+
+**上身效果**：以用户模特的正面裁图（870×1306）+ 火星家商品图作双参考，`codex/gpt-image-2` 一次成图（1024×1536），脸/发型/身材/站姿/房间背景全部保持，衬衫领型、格纹领结、格纹百褶裙、过膝袜与乐福鞋按参考替换。证据 `docs/evidence/jk-huoxing-sheet.png`。
+
+**结论**：多件套装（上衣+下装+袜子+鞋）只有 the image service 这类多图参考模型能一次完成；FASHN 的叠加式下装约束决定了它做不了整套搭配。这条链路（真实商品图 → 上身图）就是"衣橱 + 搭配生成"的最小闭环，商品数据与图像都是真实抓取，不是合成素材。
+
+**未验证**：淘宝商品图版权与商用授权未核（仅本地实验用途）；模特为虚构人物设定图，非真人；商品页价格随活动浮动，未做定时同步。
+
+## 9. libreget 能否解析电商商品图（实测：2025-11-22，结论：不能）
+
+**结论：libreget 不是电商图片解析器，无法从淘宝/拼多多/抖音商城/1688/JD 的商品链接直接抽出商品图。** 它的价值仅在于「已经拿到直链之后能正确下载」。
+
+实测全部返回 `{"type":"error","code":1,"message":"Unsupported URL. Check that the link is correct."}`：
+
+| 链接类型 | 实测 URL | 结果 |
+|---|---|---|
+| 淘宝商品 | `item.taobao.com/item.htm?id=862667630822` | Unsupported URL（`info` 与 `download` 均失败） |
+| 淘宝短链 | `m.tb.cn/h.abcdefg` | Unsupported URL |
+| 拼多多商品 | `mobile.yangkeduo.com/goods.html?goods_id=...` | Unsupported URL |
+| 拼多多短链 | `p.pinduoduo.com/abcdefg` | Unsupported URL |
+| 抖音商城 | `haohuo.jinritemai.com/views/product/item2?id=...` | Unsupported URL |
+| 1688 | `detail.1688.com/offer/123456789.html` | Unsupported URL |
+| 京东 | `item.jd.com/100012043978.html` | Unsupported URL |
+
+**根因（源码级，`C:\GitHub\libreget`）**：
+- `src-tauri\libreget-core\src\platforms\mod.rs:151-217` 的域名分发只覆盖 hotmart/youtube/instagram/threads/tiktok/twitter/reddit/twitch/pinterest/bluesky/telegram/vimeo/udemy/bilibili/kiwify/gumroad/teachable/kajabi/skool/greatcourses/thinkific/rocketseat/douyin/kuaishou/xiaohongshu/tencentvideo/iqiyi/mgtv/youku，**没有任何电商域名分支**，最后落到 `is_direct_file_url`，否则返回 `None`。
+- `platforms/` 目录只有 19 个模块（bluesky、cookie_provider、direct_file、douyin、generic_ytdlp、instagram、magnet、p2p、p2p_words、pinterest、reddit、threads、tiktok、twitch、twitter、vimeo、youtube），**无 taobao/pinduoduo/jd/1688**。
+- `douyin.rs:82-92` 只认 `share/video|note|slides`、`video|note`、`modal_id` 三种路径，是短视频/图文流，**不是商品**。
+- `mod.rs:41-63` 的 `is_direct_file_url` 是**纯扩展名判定**（`DIRECT_FILE_EXTENSIONS` 含 jpg/jpeg/png/gif/webp/bmp/tiff/svg/heic/avif），不看内容也不解析页面。
+- 浏览器扩展同样无电商权限：`browser-extension\chrome\manifest.json` 的 `host_permissions` 全是海外内容平台，`content_scripts` 为空。
+- 底层 yt-dlp 2026.10.21 也打不动：直接跑 `yt-dlp --force-generic-extractor "https://item.taobao.com/item.htm?id=..."` 同样 `ERROR: Unsupported URL`。
+
+**能力边界（已实测可用的部分）**：
+- 图片直链可以正确下载。`cbu01.alicdn.com/img/ibank/O1CN01uUgzvA2EWvm7uxcYX_!!2217481378753-0-cib.jpg` → `info` 返回 `media_type: File, file_size_bytes: 174820`，`download` 落地字节 sha256 `E7586B58…EB6141` 与原始文件完全一致。
+- 抖音视频封面 webp 同样能下（540×719 WEBP，23672B）。
+- `MediaType` 枚举含 `Photo`/`Carousel`/`Gif`，但图片抽取绑在具体平台解析器上（bluesky/instagram/pinterest/reddit/threads/tiktok/twitter），**不是通用的「给页面就抽图」**。reddit 与 pinterest 实测还分别因 403 与 404 失败，需 cookies。
+- `douyin.com/note/<id>` 实测下载得到 **6.4MB mp4（h264 1920×1080 / aac / 46.3s）**，即图文路径也走视频流，拿不到图集。
+
+**对项目的意义**：电商商品图的可行路径仍是「登录态浏览器抓 DOM 取 CDN 直链」或「1688 同源图 + UA/Referer」，libreget 只适合做拿到直链后的下载器。若要让 libreget 直接支持，需新增 Rust 平台模块并解决登录态/反爬，成本远高于现有方案。
+
+## 10. 商品链接取图：四平台实测可用（实测：2025-11-22）
+
+**做法：借本机已登录的 OpenCLI 浏览器读页面内嵌数据，不自己造登录态、不逆向接口。** 裸 HTTP 全部失败（淘宝返回 5KB 反爬空壳、1688 返回滑块页、京东与拼多多需要登录），这是走浏览器路线的直接依据。
+
+| 平台 | 入口 | 数据位置 | 实测图数 | 原图归一 |
+|---|---|---|---|---|
+| 淘宝 / 天猫 | `item.taobao.com/item.htm?id=`、`detail.tmall.com` | `window.__ICE_APP_CONTEXT__.loaderData.home.data.res`：`res.item.images` 主图 + `res.skuBase.props[].values[].image` 规格图 | 13（main 3 + sku 10） | 截到第一个图片扩展名，去掉 `_760x760q30.jpg_.webp` 这类尺寸后缀 |
+| 京东 | `item.jd.com/<sku>.html` | `opencli jd item <sku> -f json` 的 `mainImages` / `detailImages` | 17 | 剥 `.avif`/`.webp`，`/s\d+x\d+_jfs/` → `/jfs/` |
+| 拼多多 | `mobile.yangkeduo.com/goods1.html?goods_id=`（**goods.html 会 302 到安全验证页**） | `window.rawData.store.initDataObj.goods` 的 `topGallery`/`detailGallery`/`skus` | 29（main 1 + detail 28） | 剥 `?` 之后全部查询参数 |
+| 抖音商城 | 分享短链 `v.douyin.com/xxx` → `haohuo.jinritemai.com/ecommerce/trade/detail?...` | 跳转地址 query 里的 `goods_detail`（URL 编码的 JSON）：`title`、`min_price`、`img.url_list` | 2 | 直链本身就是原图（1440×1440） |
+
+- 手机分享文案可以整段粘贴：`extractLink` 用 `/https?:\/\/[^\s"'<>「」]+/` 抠链，`e.tb.cn` / `m.tb.cn` / `p.pinduoduo.com` / `v.douyin.com` 先跟随跳转；**e.tb.cn 返回 200 且没有 Location，商品地址直接写在正文 HTML 里**，所以必须「先看 Location，再从正文兜底抓 itemId / goods_id / haohuo 地址」。
+- **淘宝必须读内嵌数据，不能读 DOM**：规格图是懒加载的，未滚进视口的 `img.src` 是 `...-2-tps-2-2.png`（2×2、67 字节占位图），从 DOM 抓只能拿到 4 张（轮播 3 + 主图 1）；内嵌数据一次拿全 13 张，与滚动无关。DOM 路径保留为兜底（页面结构变化时）。
+- 淘宝详情长图（`descUrl`）拿不到：页面出现风控文案「系统检测到当前访问存在异常…商品详情页将在一段时间后自动恢复」，`descUrl` 在 HTML 里 `indexOf` 返回 -1；mtop `getdesc` 带签名也返回 `FAIL_SYS_ILLEGAL_ACCESS::非法请求`。这是已知缺口。
+- **抖音商城只出主图**：H5 详情页对浏览器一律风控（「请使用抖音APP扫码…检测到环境存在安全风险」），手机 App 内虽能看「视频 / 图集」6 张，但那是 App 私有数据；`aweme/v1/oec/product/detail` 返回 502/504，`meta_params`（base64+gzip，解码前要把 `+` 被编码成的空格还原）解开后也没有图片字段。分享链接里的 `goods_detail` 是唯一免登录来源。
+- 淘宝未加载完的 img 会给占位图，下载后按 `MIN_IMAGE_BYTES = 4096` 兜底（先 sniff 再判下限，否则 HTML 错误页会误报「占位图」）。
+- **1688 跳过**（用户明确不需要）：适配器要求 `__cn_logon__` cookie，未登录时 `item/assets/search` 全返回 `AUTH_REQUIRED`（exitCode 77）。其 `assets` 命令本身是最完整的商品图抽取器（main/sku/detail/video 分组、穿透 shadowRoot、自动滚动），登录后可直接复用。
+
+**实现落点**：`src/source.mjs`（平台表、短链解析、内嵌数据脚本、TTL 缓存、串行队列、下载校验）、`src/app.mjs` 的 `POST /api/sources` 与 `GET /api/sources/:id/:index`（**列表不暴露原图直链**）、`public/views/import.js` 与 `#/source-tryon` 路由。
+
+**两个真实运行才暴露的问题**：
+- 服务以 Electron 方式启动时 `process.execPath` 是 `DSH Desktop.exe`，`execFile(process.execPath, [opencliEntry])` 会把宿主 exe 当 node 跑。修法是 `locateNode()` 从 opencli 入口上溯与 PATH 里找真正的 `node.exe`，并支持 `OPENCLI_NODE` 覆盖。
+- **商品图是模特实拍，模型会把参考图 2 里的人当成人物参考**（首跑结果直接换成了商品图模特的脸和车站背景）。修法是在提示词里加 `IDENTITY SOURCE (critical)` 段：明确「参考图 2 里可能有模特，完全忽略她，只取衣服」，约束段补「输出只能有一个人，就是参考图 1 的人」。修复后同一输入出的图身份正确。
+
+## 11. 支付与身份的边界
 
 - 本轮充值为本地模拟（POST /api/payments + /confirm），真实支付未接入：抖音小程序虚拟支付需要主体资质与 AppID，且虚拟服务支付必须走平台虚拟支付能力，不得引导站外支付。
 - 会话为本地设备标识派生的匿名会话，不是真实鉴权；对外署形态必须换成抖音/微信登录（code2session → openid）并把订单归属绑定到平台用户。

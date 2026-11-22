@@ -5,11 +5,14 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { createApp } from '../src/app.mjs';
+import { createSourceService } from '../src/source.mjs';
 import { createStore } from '../src/store.mjs';
 import { createTryonService } from '../src/tryon.mjs';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const PERSON = `data:image/png;base64,${PNG}`;
+/** 商品图下载有占位图下限（4KiB），测试图要撑过去。 */
+const PNG_BYTES = Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.alloc(8192)]);
 const MODELS = ['codex/gpt-image-2', 'minimax-code/MiniMax-Image'];
 
 function jsonResponse(payload) {
@@ -55,7 +58,12 @@ async function withServer(options = {}, run) {
   const store = createStore({ dir, catalogFile });
   await store.ready();
   const tryon = createTryonService({ store, env: { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425' }, fetchImpl, resultsDir: join(dir, 'results') });
-  const app = createApp({ env: { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425' }, fetchImpl, store, tryon, resultsDir: join(dir, 'results') });
+  const sources = options.sources ?? createSourceService({
+    runCli: options.sourceRunner ?? (async () => ({ ok: true, data: '{"title":"外部商品","images":[]}' })),
+    fetchImpl: options.sourceFetch ?? (async () => new Response(PNG_BYTES, { headers: { 'content-type': 'image/png' } })),
+    settleMs: 0,
+  });
+  const app = createApp({ env: { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425' }, fetchImpl, store, tryon, sources, resultsDir: join(dir, 'results') });
   await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${app.address().port}`;
   const call = async (path, init = {}) => {
@@ -359,8 +367,7 @@ test('结果图需要有效票据，缺票据或票据错误都拒绝', async ()
   });
 });
 
-test('重启后 pending 订单被对账为失败并退回余额', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'tryon-restart-'));
+test('重启后 pending 订单被对账为失败并退回余额', async () => {  const dir = await mkdtemp(join(tmpdir(), 'tryon-restart-'));
   try {
     const catalogFile = join(dir, 'catalog.json');
     await writeFile(catalogFile, JSON.stringify({ products: [] }), 'utf8');
@@ -379,4 +386,90 @@ test('重启后 pending 订单被对账为失败并退回余额', async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+const SOURCE_RUNNER = async (args) => {
+  if (args[0] === 'browser' && args[3] === 'eval') {
+    return {
+      ok: true,
+      data: JSON.stringify({
+        title: '火星JK制服墨石格裙',
+        images: [
+          { url: 'https://img.alicdn.com/imgextra/i1/1099675835/O1CN01.jpg_760x760q30.jpg_.webp', group: 'main' },
+          { url: 'https://img.alicdn.com/imgextra/i1/1099675835/O1CN02.jpg', group: 'sku' },
+        ],
+      }),
+    };
+  }
+  return { ok: true, data: { url: 'about:blank' } };
+};
+
+test('POST /api/sources 解析商品链接并列出图片', async () => {
+  await withServer({ sourceRunner: SOURCE_RUNNER }, async ({ call }) => {
+    const response = await call('/api/sources', { method: 'POST', body: JSON.stringify({ url: 'https://item.taobao.com/item.htm?id=862667630822' }) });
+    assert.equal(response.status, 201);
+    assert.equal(response.payload.source.platform, 'taobao');
+    assert.equal(response.payload.source.platformLabel, '淘宝 / 天猫');
+    assert.equal(response.payload.source.title, '火星JK制服墨石格裙');
+    assert.deepEqual(response.payload.source.images.map((image) => image.group), ['main', 'sku']);
+    assert.equal(response.payload.source.images[0].url, undefined, '列表不暴露原图直链');
+  });
+});
+
+test('GET /api/sources/:id/:index 返回已校验的商品图', async () => {
+  await withServer({ sourceRunner: SOURCE_RUNNER }, async ({ call }) => {
+    const created = await call('/api/sources', { method: 'POST', body: JSON.stringify({ url: 'https://item.taobao.com/item.htm?id=862667630822' }) });
+    const id = created.payload.source.id;
+    const image = await call(`/api/sources/${id}/0`);
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get('content-type'), 'image/png');
+    assert.equal(image.headers.get('cache-control'), 'no-store');
+    const missing = await call(`/api/sources/${id}/9`);
+    assert.equal(missing.status, 404);
+  });
+});
+
+test('用链接导入的商品图下单，上游收到该图的 data URL', async () => {
+  const record = [];
+  await withServer({ sourceRunner: SOURCE_RUNNER, record }, async ({ call }) => {
+    const session = await createSession(call);
+    const created = await call('/api/sources', { method: 'POST', body: JSON.stringify({ url: 'https://item.taobao.com/item.htm?id=862667630822' }) });
+    const order = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: session.sessionId,
+        sourceId: created.payload.source.id,
+        sourceIndex: 0,
+        sourceName: '火星JK制服墨石格裙',
+        model: 'codex/gpt-image-2',
+        tier: 'standard',
+        category: 'tops',
+        garmentType: 'shirt',
+        person: PERSON,
+      }),
+    });
+    assert.equal(order.status, 201);
+    const job = await waitForJob(call, order.payload.jobId);
+    assert.equal(job.status, 'success');
+    assert.equal(record.length, 1);
+    const [person, garment] = record[0].reference_images;
+    assert.match(person, /^data:image\/png;base64,/);
+    assert.match(garment, /^data:image\/png;base64,/, '外部商品图必须转成 data URL');
+    assert.match(record[0].prompt, /火星JK制服墨石格裙/, '提示词应带外部商品名');
+  });
+});
+
+test('不支持的链接与未知 sourceId 给出明确错误', async () => {
+  await withServer({ sourceRunner: SOURCE_RUNNER }, async ({ call }) => {
+    const unsupported = await call('/api/sources', { method: 'POST', body: JSON.stringify({ url: 'https://www.amazon.com/dp/B0001' }) });
+    assert.equal(unsupported.status, 400);
+    assert.equal(unsupported.payload.error.code, 'UNSUPPORTED_PLATFORM');
+    const session = await createSession(call);
+    const order = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: session.sessionId, sourceId: 'missing', model: 'codex/gpt-image-2', tier: 'standard', category: 'tops', garmentType: 'shirt', person: PERSON }),
+    });
+    assert.equal(order.status, 404);
+    assert.equal(order.payload.error.code, 'SOURCE_EXPIRED');
+  });
 });

@@ -68,6 +68,14 @@ test('用户补充要求单独成段且不得覆盖区域与身份规则', () =>
   assert.match(prompt, /must not change the replacement region, the identity of the person/);
 });
 
+test('商品图里的模特不会被当成人物参考', () => {
+  const prompt = buildTryonPrompt({ category: 'tops', garmentType: 'shirt', garmentName: '水手服' });
+  assert.match(prompt, /IDENTITY SOURCE/);
+  assert.match(prompt, /reference image 2 may itself show a model wearing the garment; ignore that model entirely/);
+  assert.match(prompt, /from reference image 2 take the garment only/);
+  assert.match(prompt, /the output must contain exactly one person, and that person is reference image 1/);
+});
+
 test('用户补充要求为空时不生成 USER REQUEST 段', () => {
   const prompt = buildTryonPrompt({ category: 'tops', garmentType: 'tee', extra: '   ' });
   assert.doesNotMatch(prompt, /USER REQUEST/);

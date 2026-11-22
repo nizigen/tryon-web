@@ -1,8 +1,9 @@
 import { api, deviceId, getSessionId, setSessionId } from './lib/api.js';
 import { clear, h, money, toast } from './lib/dom.js';
+import { renderImport } from './views/import.js';
 import { renderMe } from './views/me.js';
 import { renderShop } from './views/shop.js';
-import { renderTryon } from './views/tryon.js';
+import { renderSourceTryon, renderTryon } from './views/tryon.js';
 
 const root = document.getElementById('main');
 const balanceValue = document.getElementById('balance-value');
@@ -13,8 +14,10 @@ const ctx = {
   config: { models: [], packs: [], categories: [], fits: [] },
   products: [],
   balanceCents: 0,
+  importedSource: null,
   onNavigate,
   onOpenProduct,
+  onOpenImport,
   onBalanceChanged,
   async refreshBalance() {
     if (!getSessionId()) return;
@@ -37,21 +40,28 @@ function onOpenProduct(productId) {
   location.hash = `#/tryon/${productId}`;
 }
 
+function onOpenImport() {
+  location.hash = '#/import';
+}
+
 function onNavigate(route) {
-  location.hash = route === 'me' ? '#/me' : '#/shop';
+  location.hash = `#/${route}`;
 }
 
 function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
   const [route, id] = hash.split('/');
   if (route === 'tryon' && id) return { route: 'tryon', id };
+  if (route === 'source-tryon') return { route: 'source-tryon' };
+  if (route === 'import') return { route: 'import' };
   if (route === 'me') return { route: 'me' };
   return { route: 'shop' };
 }
 
 function setActiveTab(route) {
+  const tabRoute = route === 'tryon' || route === 'import' || route === 'source-tryon' ? 'shop' : route;
   for (const tab of document.querySelectorAll('.tab')) {
-    const active = tab.dataset.route === route;
+    const active = tab.dataset.route === tabRoute;
     tab.classList.toggle('is-active', active);
     if (active) tab.setAttribute('aria-current', 'page');
     else tab.removeAttribute('aria-current');
@@ -60,9 +70,11 @@ function setActiveTab(route) {
 
 function render() {
   const { route, id } = currentRoute();
-  setActiveTab(route === 'tryon' ? 'shop' : route);
+  setActiveTab(route);
   clear(root);
   if (route === 'tryon') renderTryon(root, ctx, id);
+  else if (route === 'source-tryon') renderSourceTryon(root, ctx);
+  else if (route === 'import') renderImport(root, ctx);
   else if (route === 'me') renderMe(root, ctx);
   else renderShop(root, ctx);
   root.focus({ preventScroll: true });

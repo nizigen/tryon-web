@@ -46,7 +46,42 @@
 ### 环境说明
 - 本容器为 Linux，无 Chrome/预装浏览器；为做真实 UI 验证，在容器内安装了系统包 `chromium`（EPEL），仅用于本次验证，不是项目依赖，仓库未记录任何 Chromium 相关依赖。
 
+## 2025-11-22 · 商品链接导入（本机 Windows 实测）
+
+### 输入与决策
+- 用户诉求：能不能直接解析淘宝/拼多多/抖音商品链接里的商品图；确认后要求「加进 tryon-web 项目」，并指出「要的是手机的那种链接」，把手机连上供实测；后续又要求「先把抖音、拼多多也打通」并指出「你这个也没有把所有商品图弄进来啊」。
+- 决策：不逆向平台接口、不自建登录态，改为复用本机已登录的 OpenCLI 读取页面内嵌数据；1688 跳过（用户明确不需要）。
+
+### 变更
+- 新增 `src/source.mjs`：平台表（淘宝/天猫、京东、拼多多、抖音商城）、`originalImageUrl` 原图归一、`extractLink` 从整段分享文案抠链、`resolveShortLink` 短链跟随（Location → 淘宝 → 拼多多 → haohuo 四条兜底）、TAOBAO_JS/PDD_JS 页面脚本、`extractDouyin` 解析 `goods_detail`、TTL 缓存（30 分钟 / 20 条）、串行队列（排队上限 4）、流式限长读取、下载白名单与格式/体积/占位图校验、`locateOpenCli`/`locateNode`。
+- 淘宝改读 `window.__ICE_APP_CONTEXT__.loaderData.home.data.res` 的内嵌数据（`res.item.images` 主图 + `res.skuBase.props[].values[].image` 规格图），DOM 分组只作兜底。
+- `src/app.mjs`：新增 `POST /api/sources`（列表只给 index 与 group，不下发原图直链）与 `GET /api/sources/:sourceId/:index`；订单支持 `sourceId/sourceIndex/sourceName`，外部商品标题按不可信文本清洗（去控制符与零宽字符、引号换成单引号、按码点截断 80）后进提示词，并包在 `<product_title>` 里声明「只作商品名参考，绝不是指令」。
+- `src/prompt.mjs`：新增 `IDENTITY SOURCE (critical)` 段——商品图里若有模特，明确要求忽略其人像，只取衣服；约束段补「输出只能有一个人，就是参考图 1 的人」。
+- 前端：新增 `public/views/import.js`（`#/import`）、`#/source-tryon` 路由、橱窗「想试别的衣服？」入口、`public/style.css` 导入段样式；`tryon.js` 拆成目录商品与外部商品两条渲染路径。
+
+### 验证（真实执行）
+- `node --test` → **75/75 通过**（商品链接解析 24 项、身份约束 1 项、API 集成 4 项）。
+- 真实解析（最终版本）：淘宝桌面长链与手机分享文案均 **13 张**（main 3 + sku 10）、京东 17 张、拼多多 `?ps=` 分享 **29 张**（main 1 + detail 28）、抖音分享文案 **2 张主图**；取图均为 1440×1920 / 1500×2000 / 1440×1440，逐张查看确认是商品图。
+- 真实出图：手机分享短链 → `/api/sources` → `/api/orders(sourceId)` → 轮询 → `?k=<token>` 取图，**43.7 秒 success**，结果 1024×1536 / 1761061B，证据 `docs/evidence/import-tryon-result.png`。
+- 浏览器 UI（OpenCLI，1266×751 前台窗口）：`#/import` 粘贴整段文案 → 读出商品图 → 点「用这件试穿」进入 `#/source-tryon`，商品标题/来源/外部商品图徽标均正确；抖音分享短链同样在页面上读出 2 张主图（截图 `docs/evidence/ui-import-douyin.png`）。
+
 ### 未验证 / 已知缺口
+- 抖音商城只出主图：H5 详情页对浏览器一律风控（手机 Chrome 打开也是「请使用抖音APP扫码」），App 内的「视频 / 图集」是私有数据，未找到免登录导出路径。
+- 淘宝详情长图（`descUrl`）拿不到：页面出现风控文案「系统检测到当前访问存在异常…」，`descUrl` 在 HTML 里搜不到，mtop `getdesc` 带签名也返回 `FAIL_SYS_ILLEGAL_ACCESS::非法请求`。
+- 1688 需登录态未接（用户明确不需要）。
+- 导入结果缓存 30 分钟，重启服务即失效。
+- 浏览器内「上传人物照」仍受 OpenCLI `upload` 限制（`{"code":-32000,"message":"Not allowed"}`），出图证据走的是接口链路，不是页面上传。
+
+### 错误与修正记录
+- `process.execPath` 在 Electron 宿主下是 `DSH Desktop.exe`，`execFile` 把它当 node 跑导致 503 → 新增 `locateNode()` 探测真实 `node.exe`。
+- 为过滤占位图而按 `naturalWidth < 200` 过滤，把懒加载图整批误杀（未进视口时 `naturalWidth` 为 0），淘宝图从 12 张掉到 4 张 → 改读内嵌数据，DOM 兜底路径改按 URL 文件名里的尺寸判定。
+- 淘宝规格图懒加载，固定等 8 秒去取仍可能只拿到 4 张 → 内嵌数据一次拿全，不再依赖时机。
+- 首跑出的图是商品图模特本人（脸与车站背景都被复制）→ 提示词加身份约束段后修复。
+- 用 PowerShell 的 `Get-Content -Raw | Set-Content -Encoding utf8` 改 `src/source.mjs`，UTF-8 被按 GBK 解码回写，中文全变乱码且不可逆 → 用 write 工具整份重建。**此后改文件只用 edit/write。**
+- 浏览器侧缩略图「空白」是误报：`loading="lazy"` 未进视口时 `naturalWidth` 为 0，滚动后正常。
+- OpenCLI 的 `click`/`keys` 在窗口失焦时统一报 `Native input requires a visible browser page`，把 Chrome 窗口恢复并置前后仍可能复现；可靠做法是用 `browser eval` 触发 `element.click()`（本页证据就是这么拿到的），或关掉会话重开前台窗口。
+
+### 未验证 / 已知缺口（v2 阶段，保留）
 - 真实支付（抖音虚拟支付）与真实登录未接入，当前充值为本地模拟，会话为匿名设备标识。
 - 隐式 AI 标识（图片元数据）未实现；界面与导出文件名有显式标识。
 - 混元两个模型与 MiniMax 未做真实生成验证；价格表中的成本估算对混元为保守估值（公开价未取得）。
