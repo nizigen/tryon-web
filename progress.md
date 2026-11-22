@@ -154,11 +154,24 @@
 - 新增 `run-demo.cmd`（`DEMO_MODE=1` 启动）。
 
 **验证（真实执行）**
-- `node --test` **89/89 通过**（新增多件下单、pieces 校验、settings 读写、演示模式计费为 0 等用例）。
-- 真实多件出图（`DEMO_MODE=1`，`artifacts/probe/probe-studio.mjs`）：上衣 + 下装 → 201、`priceCents:0`、25s success、结果 1828900B，人物身份保留且上下装同时替换（`artifacts/test/studio-result.png`）。
+- `node --test` **96/96 通过**（新增多件下单、pieces 校验、settings 读写、演示模式计费为 0、设置模型白名单、cookie 不外泄、演示模式关直连、导入图进多件、非法单品四连、两配饰 + 5 件上限、下单中途失败回滚等用例）。
+- 真实多件出图（`DEMO_MODE=1`，`artifacts/probe/probe-studio.mjs`）：上衣 + 下装 → 201、`priceCents:0`、35s success、结果 1846617B，人物身份保留且上下装同时替换（`artifacts/test/studio-result.png`）。
 - 全路由截图（`artifacts/shoot-all.mjs`，6 路由 × 1440/768/390 = 18 张）全部成功，`scrollWidth === clientWidth`、无越界元素。
-- 设置页：`GET /api/settings` 返回 model/4 个模型/取图来源布尔/网关连通；`PATCH` 后回读一致。
+- 设置页：`GET /api/settings` 返回 model/4 个模型/取图来源布尔/网关连通；`PATCH` 后回读一致；写不存在的模型返回 400 `MODEL_UNAVAILABLE` 且不改动设置。
 - 下拉一致性实测：trigger 与 item 同为 40px 高、`padding 0 14px`、14px 字号，文字左边缘坐标一致。
+
+**独立评审与修复（2025-11-23）**
+只读评审（基线 `3c79ea2`）结论：无 P0，1 个 P1 + 若干 P2。已修：
+
+| 项 | 问题 | 修复 |
+| --- | --- | --- |
+| P1 | 演示模式下 `/api/tryon` 仍可直连上游，绕过下单消耗额度 | 改为 `isDemoMode(env) \|\| !allowSimulation` 即 403；补「演示模式不得向上游发起生成」用例 |
+| P2-a | 下单 catch 只退款，不撤已入队任务、不撤订单 → 「钱退了图还出了」、重启后二次退款 | `tryon.enqueue({ start:false })` + 新增 `start()/cancel()`；先把 jobId 落库再启动；回滚顺序为撤任务 → 订单置失败 → 退款；补「下单中途失败」用例 |
+| P2-c | `PATCH /api/settings` 不校验模型是否存在 | 校验 `models.includes(model)`，否则 400 `MODEL_UNAVAILABLE` |
+| P2-d | 商品标题可闭合提示词里的 `<product_title>` 标签 | `sanitizeText` 增加剔除 `<` `>` |
+| P2-e | 胶囊下拉在换页时未摘除 document 监听器 | 新增 `closeAllMenus()`，`render()` 清空前调用；`onOutside` 对已脱离文档的节点自行收摊 |
+
+评审确认无 SSRF（导入图只读服务端白名单缓存、目录商品读 catalog、上传只 decode dataURL）、前端 `h()` 全 textContent 无 XSS、参考图顺序与提示词编号一致。仍记录未修：扣费与建单之间进程崩溃的极窄窗口、`GET /api/config` 在演示模式仍返回价格表（仅 DevTools 可见）。
 
 **修复的真机缺陷**
 - 换页不重置滚动 → 从长页跳到短页时标题被顶栏压住（`render()` 末尾补 `window.scrollTo(0, 0)`）。
@@ -166,7 +179,7 @@
 - `.app-shell` 的 `min-height:100vh` 把短页面内容推低（补 `align-content: start`）。
 
 **未验证 / 已知缺口**
-- 多件越多越容易串味；本轮只验证了上衣 + 下装两件，五件满配未做真实生成对比。
+- 多件越多越容易串味；本轮只验证了上衣 + 下装两件，五件满配未做真实生成对比（最多 6 张参考图上游是否稳定支持未验证）。
 - 演示模式只隐藏前端金额，`data/state.json` 里仍记录 `priceCents`（值恒为 0），真实计费模式未在本轮回归。
 - 抖音小程序工程仍未开始（本轮只做 Web 工作台）。
 
