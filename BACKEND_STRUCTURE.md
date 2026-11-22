@@ -9,7 +9,12 @@ src/the image service.mjs        网关发现、模型目录、generate_image + 
 src/prompt.mjs        服装分类体系与结构化提示词
 src/pricing.mjs       按模型/档位的定价表与成本估算
 src/source.mjs        商品链接取图：平台识别、短链跟随、淘宝/抖音直连、OpenCLI 兜底、TTL 缓存
-src/store.mjs         JSON 持久化（商品、会话、订单、充值单）
+src/wardrobe.mjs      我的衣橱：入库（上传 / 导入结果）、取图、删除、BM25 检索
+src/caption.mjs       视觉描述：调 the image service 对话模型给单品写一句中文描述（失败返回空串）
+src/outfit.mjs        AI 今日穿搭：检索候选 → 模型选搭（严格校验）→ 规则回退
+src/login.mjs         扫码登录：拉起受控 Chrome、CDP 读全量 cookie（含 HttpOnly）、写 cookies.json
+src/cookies.mjs       cookie 文件路径与读取
+src/store.mjs         JSON 持久化（商品、会话、订单、充值单、设置）
 src/tryon.mjs         试穿任务编排（占位→扣费→生成→扣减/退回）
 src/validate.mjs      图片/字段校验与限额
 src/errors.mjs        统一错误类型
@@ -40,6 +45,23 @@ src/errors.mjs        统一错误类型
 - **订单记录不保存人物图与服装图**，只保存提示词与元数据；人像与服装图只在任务内存中流转。
 
 **设置 settings**（`data/state.json` 的 `settings`）：`model`——设置页选定的图片模型，`null` 表示跟随目录默认值。只在设置页写，下单时不再让用户选模型。
+
+**衣橱 wardrobe**（`data/wardrobe.json` 索引 + `data/wardrobe/<id>.<ext>` 图片，均被 `.gitignore` 忽略）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id | string | `randomUUID()`，同时用作图片文件名，入库前校验只含 `[0-9a-f-]` |
+| name | string | 单品名（≤80 码点） |
+| category | enum | 七大类：top / outer / bottom / dress / hosiery / shoes / accessory |
+| subtype | string | 子类（来自 `data/taxonomy.json`，可空） |
+| tags | string[] | 标签 |
+| description | string | 一句中文描述，入库时若为空则调视觉模型补写；模型不可用时留空 |
+| imageFile | string | `<id>.<ext>`，读取时按 id 重建路径并校验落在 `data/wardrobe/` 内 |
+| mime / bytes / sha256 | string / number / string | 入库时算好，供检索与去重参考 |
+| source | object | `{kind:'upload'}` / `{kind:'import', sourceId, sourceIndex, platform}` / `{kind:'product', productId}` |
+| createdAt | string | ISO 时间 |
+
+**登录会话 logins**（内存态，不落盘）：`{platform, state:'starting'|'waiting'|'done'|'failed'|'expired', sessionId, startedAt, profileDir}`；每个平台同时只允许一个会话，cookie 写到 `data/cookies.json` 的对应平台键（只改该键，保留其它键）。
 
 **充值单 payments[]**：`id`、`sessionId`、`packId`、`amountCents`、`status`（pending/paid）、`createdAt`、`paidAt`。
 
@@ -87,14 +109,23 @@ src/errors.mjs        统一错误类型
 | GET | /api/session/:id | — | `{ sessionId, balanceCents, packs }` |
 | GET | /api/settings | — | `{ model, models, demoMode, sources:{taobao,jd,pdd,douyin}, gateway:{reachable} }`（`sources` 只回布尔，不回 cookie） |
 | PATCH | /api/settings | `{ model }` | `{ model }` |
-| POST | /api/orders | `{ sessionId, pieces:[{slot, garmentType?, source}], model, tier, fit?, prompt?, person }`；`pieces[].source` 为 `{kind:'product', productId}` / `{kind:'import', sourceId, sourceIndex, name}` / `{kind:'upload', garment}`；兼容旧的单件入参 `{productId?/category?/garmentType?/sourceId?/sourceIndex?/sourceName?, garment?}` | `{ order:{id,status,slots,priceCents}, orderId, jobId, priceCents, balanceCents }` |
+| POST | /api/orders | `{ sessionId, pieces:[{slot, garmentType?, source}], model, tier, fit?, prompt?, person }`；`pieces[].source` 为 `{kind:'product', productId}` / `{kind:'import', sourceId, sourceIndex, name}` / `{kind:'upload', garment}` / `{kind:'wardrobe', wardrobeId}`；兼容旧的单件入参 `{productId?/category?/garmentType?/sourceId?/sourceIndex?/sourceName?, garment?}` | `{ order:{id,status,slots,priceCents}, orderId, jobId, priceCents, balanceCents }` |
 | GET | /api/orders | `x-session-id` | `{ orders:[Order] }`（含 jobId、slots，不含 costCents） |
 | GET | /api/orders/:id | `x-session-id` | `{ order:Order, resultToken }` |
 | GET | /api/jobs/:id | — | `{ jobId, orderId, status, stage, error?, updatedAt }` |
 | GET | /api/results/:file | `?k=<token>` | 结果图二进制（票据缺失或过期返回 403） |
 | POST | /api/payments | `{ sessionId, packId }` | `{ paymentId, amountCents, status:"pending", channels:[], notice }`（**本地模拟**，部署形态与演示模式默认关闭） |
 | POST | /api/payments/:id/confirm | `{ sessionId }` | `{ paymentId, status:"paid", balanceCents }`（**本地模拟**） |
-| POST | /api/tryon | `{ model, person, garment, category, garmentType?, tier?, prompt? }` | 同步生成结果（兼容/本地直连；部署形态默认关闭） |
+| POST | /api/tryon | `{ model, person, garment, category, garmentType?, tier?, prompt? }` | 同步生成结果（兼容/本地直连；部署形态与演示模式默认关闭） |
+| GET | /api/wardrobe | — | `{ items:[{id,name,category,subtype,tags,description,source,imageUrl,createdAt}] }` |
+| POST | /api/wardrobe | `{ name, category, subtype?, tags?, description?, image }` 或 `{ ..., sourceId, sourceIndex }`（从导入结果取图） | `{ item }`（201） |
+| DELETE | /api/wardrobe/:id | — | `{ ok:true }`（不存在 404 `WARDROBE_NOT_FOUND`） |
+| GET | /api/wardrobe/:id/image | — | 单品图二进制（`no-store`、`nosniff`） |
+| POST | /api/wardrobe/search | `{ query }` | `{ results:[{item,score}] }`（BM25，只回 score>0） |
+| POST | /api/outfit/suggest | `{ request }`（≤200 码点） | `{ suggestion:{ slots:{top?,outer?,bottom?,dress?,hosiery?,shoes?,accessory?}, reason, missing:[slot] } }`（`slots` 里每格是衣橱单品视图，配饰可能是数组） |
+| POST | /api/login/:platform | —（platform ∈ taobao/jd/pdd） | `{ sessionId }`（202；已有会话 409 `LOGIN_IN_PROGRESS`） |
+| GET | /api/login/:platform/status | `?sessionId=` | `{ status, platform }`（未知 session 返回 `expired`） |
+| POST | /api/login/:platform/cancel | `{ sessionId }` | 204 |
 
 ### 多件搭配（pieces）
 
@@ -102,7 +133,31 @@ src/errors.mjs        统一错误类型
 - 每个格子最多一件，`accessory` 最多两件，单次总件数 ≤5（`limits.maxPieces`）。
 - `dress` 与 `top`/`bottom` 互斥（同时出现返回 400）。
 - 服务端按 `SLOT_ORDER`（top → outer → bottom → dress → hosiery → shoes → accessory）排序后再拼提示词与参考图，保证「reference image N」编号与实际顺序一致：第 1 张恒为人物，其后依次为各件单品。
-- 每件单品的服装图在**占位之前**全部取好（目录商品读盘、导入走 `sourceId`、上传走 data URL），任一件失败都不会占用任务槽或扣费。
+- 每件单品的服装图在**占位之前**全部取好（目录商品读盘、导入走 `sourceId`、上传走 data URL、衣橱走 `wardrobeId`），任一件失败都不会占用任务槽或扣费。
+
+### 我的衣橱（src/wardrobe.mjs）
+
+- 入库只接受 `data:image/(png|jpeg|webp);base64,` 或 `{sourceId, sourceIndex}`；解码后 ≤8MiB，`sniff()` 必须与 MIME 一致（gif 等直接 400 `INVALID_IMAGE`）。
+- `category` 必须在七大类白名单内；`subtype` 可选，前端上传弹层用两级下拉让用户选到子类（如 `bottom/百褶裙`），导入页则用「这件属于哪一类」的胶囊决定 `category`；`name` ≤80 码点；`tags` 最多 12 个、每个 ≤20 码点。
+- 图片写入 `data/wardrobe/<id>.<ext>`，`id` 用 `randomUUID()`；读取时按 id 重建路径并校验仍在 `data/wardrobe/` 内，防止路径穿越。
+- 索引写盘走 `.tmp` → rename，写入串行化，避免并发写坏 JSON。
+- 入库时若 `description` 为空，调 `src/caption.mjs` 用视觉模型补一句（`CAPTION_MODEL`，默认 `codex/gpt-6.1-sol`，8s 超时）；模型失败只是留空，不影响入库。
+- `search` 用 BM25（中文按单字 + 二元组切分，索引 `name`/`description`/`subtype`/`category`/`tags`），只返回 score>0 的结果。
+
+### AI 今日穿搭（src/outfit.mjs）
+
+- 先 `wardrobe.search(request, 12)`；**候选凑不成一套时从全量衣橱补齐**（缺上衣/下装且没有连衣裙时，把最多 24 件全量单品并进候选）。两个原因实测都会踩到：需求句往往不含单品关键词（「今天去逛街，想穿得清爽一点」BM25 零命中），命中也常只落在某一格（只搜到上衣，下装凑不出来）。
+- 候选交给 `STYLIST_MODEL`（默认同 `CAPTION_MODEL`），要求只回 JSON；返回后严格校验：id 必须存在于候选、`category` 必须与格子匹配、`accessory` ≤2、`dress` 与 `top`/`bottom` 互斥。任一非法则整体判为不可用。
+- 模型不可用/超时/返回非法 JSON 时走 `rulePick` 规则回退（连衣裙优先，否则上衣+下装，再补外套/袜/鞋，配饰 ≤2），并在 `missing` 里报告缺的格子。
+- 只做选搭，不生成图片；出图仍走 `POST /api/orders`。
+
+### 扫码登录（src/login.mjs）
+
+- 每个平台一个会话，`start` 时用**受控 Chrome**（独立 `--user-data-dir`，落在 `data/browser-profile/`）打开对应登录页，然后经 CDP `Network.getAllCookies` 读取**含 HttpOnly** 的全量 cookie（OpenCLI 的 `browser eval` 拿不到 HttpOnly，故不走它）。
+- 判据只认真正的登录标识：淘宝 `unb`、京东 `pt_key`、拼多多 `PASS_ID`。**`cookie2` 在未登录访客页也会下发，不能当判据**（实测会误判成功并覆盖真实 cookie）。
+- 同一域名的多个 cookie 按 `domainRank`（带前导点 > 标签数 > 长度）取，保证 `.taobao.com` 胜过 host-only 的 `login.taobao.com`（后者不会随商品页请求发出）。
+- 成功后只改 `data/cookies.json` 里该平台的键，串行写 + `.tmp` → rename；超时（默认 300s，`LOGIN_TIMEOUT_MS`）或失败统一 503 `LOGIN_UNAVAILABLE`。
+- 进程退出（SIGINT/SIGTERM）时 `dispose()` 杀掉受控 Chrome，避免残留进程。
 
 ### 商品链接取图（src/source.mjs）
 
@@ -130,7 +185,10 @@ src/errors.mjs        统一错误类型
 - 模型必须出现在当前 `tools/list` 目录中；档位必须属于该模型，否则 400。
 - 并发：同一会话同时只允许一个进行中任务（409）。
 - 商品链接：只接受 http/https，主机必须在平台白名单内；最多 40 张图；外部商品标题按不可信文本截断到 80 码点后才进提示词。
-- `PATCH /api/settings` 只接受 `model` 一个字段，长度 ≤120。
+- `PATCH /api/settings` 只接受 `model` 一个字段，长度 ≤120，且必须出现在当前网关模型目录里（否则 400 `MODEL_UNAVAILABLE`）。
+- 衣橱：`id` 只允许 `[0-9a-f-]`，读取时二次校验落在 `data/wardrobe/` 内；`name`/`tags`/`description` 走 `sanitizeText`（去控制符、零宽、尖括号）。
+- `POST /api/outfit/suggest` 的 `request` ≤200 码点；AI 返回只用于选搭，任何字符串都当不可信文本渲染。
+- 扫码登录接口只允许 `taobao|jd|pdd`，不接收用户给的 URL 或路径；profile 目录固定为 `data/browser-profile/`。
 
 ## 安全
 

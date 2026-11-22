@@ -43,6 +43,9 @@ export function toast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     node.hidden = true;
+    // 收起时清空文本：否则下一个人读 textContent 会读到上一次的报错，
+    // 明明成功了也像是失败（验收脚本就被这条残留骗过一次）。
+    node.textContent = '';
   }, 3200);
 }
 
@@ -243,6 +246,111 @@ export function createCapsuleSelect({ options = [], value = '', placeholder = '�
       trigger.disabled = next;
       el.classList.toggle('is-disabled', next);
       if (next) closeMenu();
+    },
+  };
+}
+
+/**
+ * 两级联动胶囊：一级选大类，二级选该大类的子类。
+ *
+ * 一级变化时清空二级并重建它的选项，因此不会出现「上衣 · 牛仔裤」这种
+ * 跨类组合；二级在没有可选项时置灰。两级都直接复用 createCapsuleSelect，
+ * 高度、圆角、内边距与展开行为与单级胶囊完全一致，不存在第二套度量。
+ *
+ * setValue / setSubValue 只改值、不触发 onChange（与 createCapsuleSelect 一致），
+ * 供外部回填状态用；setValue 会同时清空二级，因为旧子类已不属于新大类。
+ *
+ * @param {object} config
+ * @param {Array<{value:string,label:string,options:Array<{value:string,label:string}|string>}>} config.groups
+ * @param {string} [config.value] 一级初始值
+ * @param {string} [config.subValue] 二级初始值
+ * @param {string} [config.placeholder] 一级占位文案
+ * @param {string} [config.subPlaceholder] 二级占位文案
+ * @param {string} [config.ariaLabel] 两级共用的无障碍前缀，如「第 1 个单品」
+ * @param {(value:string,subValue:string)=>void} [config.onChange] 任一级变化后回调
+ * @returns {{el:HTMLElement,getValue:()=>string,getSubValue:()=>string,setValue:(v:string)=>void,setSubValue:(v:string)=>void,setGroups:(list:Array)=>void}}
+ */
+export function createCascadeSelect({
+  groups = [],
+  value = '',
+  subValue = '',
+  placeholder = '请选择',
+  subPlaceholder = '请选择子类',
+  ariaLabel = '',
+  onChange,
+} = {}) {
+  let currentGroups = normalizeGroups(groups);
+  let currentValue = value;
+  let currentSubValue = subValue;
+
+  function normalizeGroups(list) {
+    return (list || []).map((group) => ({
+      value: group.value,
+      label: group.label ?? group.value,
+      options: (group.options || []).map((option) => (typeof option === 'string' ? { value: option, label: option } : option)),
+    }));
+  }
+
+  function optionsFor(key) {
+    return currentGroups.find((group) => group.value === key)?.options ?? [];
+  }
+
+  const primary = createCapsuleSelect({
+    options: currentGroups,
+    value: currentValue,
+    placeholder,
+    ariaLabel: ariaLabel ? `${ariaLabel}大类` : '',
+    onChange: (next) => {
+      currentValue = next;
+      currentSubValue = '';
+      paintSecondary();
+      onChange?.(currentValue, currentSubValue);
+    },
+  });
+
+  const secondary = createCapsuleSelect({
+    options: [],
+    value: '',
+    placeholder: subPlaceholder,
+    ariaLabel: ariaLabel ? `${ariaLabel}子类` : '',
+    onChange: (next) => {
+      currentSubValue = next;
+      onChange?.(currentValue, currentSubValue);
+    },
+  });
+
+  function paintSecondary() {
+    const options = optionsFor(currentValue);
+    secondary.setOptions(options);
+    secondary.setValue(currentSubValue);
+    secondary.setDisabled(options.length === 0);
+  }
+
+  paintSecondary();
+
+  return {
+    el: h('div', { class: 'cascade' }, [primary.el, secondary.el]),
+    getValue: () => currentValue,
+    getSubValue: () => currentSubValue,
+    setValue(next) {
+      currentValue = next;
+      currentSubValue = '';
+      primary.setValue(next);
+      paintSecondary();
+    },
+    setSubValue(next) {
+      currentSubValue = next;
+      secondary.setValue(next);
+    },
+    setGroups(list) {
+      currentGroups = normalizeGroups(list);
+      if (!currentGroups.some((group) => group.value === currentValue)) {
+        currentValue = '';
+        currentSubValue = '';
+      }
+      primary.setOptions(currentGroups);
+      primary.setValue(currentValue);
+      paintSecondary();
     },
   };
 }

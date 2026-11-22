@@ -783,14 +783,17 @@ async function extractPddDirect(url, fetchImpl, signal, cookie) {
  * 解析商品链接。同一时刻只跑一个解析：OpenCLI 共用一个浏览器会话，并发会互相踩。
  * @param {object} [options]
  * @param {(args: string[], timeout: number) => Promise<any>} [options.runCli] 测试注入，替代真实 OpenCLI
+ * @param {string} [options.dataDir] 数据目录；cookie 文件与扫码登录写的是同一个绝对路径
  */
-export function createSourceService({ env = process.env, fetchImpl = fetch, runCli: injected, cookies, settleMs = 8000, ttlMs = 30 * 60 * 1000, max = 20 } = {}) {
+export function createSourceService({ env = process.env, fetchImpl = fetch, runCli: injected, cookies, dataDir, settleMs = 8000, ttlMs = 30 * 60 * 1000, max = 20 } = {}) {
   const entry = injected ? null : locateOpenCli(env);
   const nodeBin = injected ? null : locateNode(entry, env);
   // runCli 传 null 表示显式禁用 OpenCLI 兜底（测试用）；不传才去探测本机 OpenCLI。
   const runCli = injected === null ? null : injected ?? (entry && nodeBin ? createRunner(entry, nodeBin) : null);
   // 测试注入 runCli 时按「测试模式」看待，不读本机真实 cookie，保证测试可重复。
-  const cookieJar = cookies ?? (injected !== undefined ? {} : loadCookies(env));
+  // 注入的 cookies 是固定表；没注入就在每次解析前重读文件——扫码登录成功后不必重启进程。
+  const fixedCookies = cookies ?? (injected !== undefined ? {} : null);
+  const readJar = () => fixedCookies ?? loadCookies(env, dataDir);
   const sources = new Map();
   let queue = Promise.resolve();
   let pending = 0;
@@ -803,7 +806,7 @@ export function createSourceService({ env = process.env, fetchImpl = fetch, runC
   }
 
   async function extract(url, platform, signal) {
-    const cookie = cookieJar[platform.id] ?? '';
+    const cookie = readJar()[platform.id] ?? '';
     if (platform.id === 'douyin') {
       // 商品分享页（haohuo）走 goods_detail；视频/图文帖走 ttwid 分享页。两者都免登录。
       if (url.host === 'haohuo.jinritemai.com') return extractDouyin(url);

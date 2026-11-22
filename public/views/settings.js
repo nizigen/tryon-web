@@ -1,7 +1,8 @@
 import { api } from '../lib/api.js';
-import { createCapsuleSelect, h, toast } from '../lib/dom.js';
+import { createCapsuleSelect, errorText, h, toast } from '../lib/dom.js';
 
 const SOURCE_LABEL = { taobao: '淘宝', jd: '京东', pdd: '拼多多', douyin: '抖音' };
+const LOGIN_PLATFORMS = ['taobao', 'jd', 'pdd'];
 
 /**
  * 设置页：模型统一在这里选择（工作台/试穿页不再出现模型选择），
@@ -9,6 +10,7 @@ const SOURCE_LABEL = { taobao: '淘宝', jd: '京东', pdd: '拼多多', douyin:
  */
 export function renderSettings(root, ctx) {
   const body = h('div', { class: 'settings' });
+  const loginStates = {};
 
   root.append(
     h('section', { class: 'page-head' }, [
@@ -24,7 +26,9 @@ export function renderSettings(root, ctx) {
   async function refresh() {
     try {
       ctx.settings = await api('/api/settings');
-      if (typeof ctx.settings.demoMode === 'boolean') ctx.demoMode = ctx.settings.demoMode;
+      // 走 ctx.applyDemoMode：它同时改 body 的 is-demo、徽标与余额框，
+      // 只写 ctx.demoMode 会在 /api/config 失败时留下「设置说开着、界面还显示价格」。
+      if (typeof ctx.settings.demoMode === 'boolean') ctx.applyDemoMode?.(ctx.settings.demoMode);
     } catch {
       const config = ctx.config || {};
       ctx.settings = Array.isArray(config.models) && config.models.length
@@ -108,18 +112,143 @@ export function renderSettings(root, ctx) {
   function cookiesCard(settings) {
     const sources = settings.sources;
     const known = sources != null;
-    const rows = Object.keys(SOURCE_LABEL).map((key) => {
-      const on = known ? Boolean(sources[key]) : false;
-      return h('div', { class: 'kv' }, [
-        h('span', { class: 'kv__label', text: SOURCE_LABEL[key] }),
-        h('span', { class: `status-pill ${on ? 'is-on' : 'is-off'}`, text: known ? (on ? '已配置' : '未配置') : '未知' }),
-      ]);
-    });
+    const rows = Object.keys(SOURCE_LABEL).map((key) => cookiesRow(key, known, known ? Boolean(sources[key]) : false));
     return h('section', { class: 'card' }, [
       h('h2', { class: 'section__title', text: '来源登录状态' }),
       ...rows,
-      h('p', { class: 'field__hint', text: '仅显示是否已配置，不会展示任何 cookie 内容；京东与抖音免登录。' }),
+      h('p', { class: 'field__hint', text: '仅显示是否已配置，不会展示任何 cookie 内容；抖音无需登录。' }),
     ]);
+  }
+
+  function cookiesRow(key, known, on) {
+    const pill = h('span', {
+      class: `status-pill ${on ? 'is-on' : 'is-off'}`,
+      text: known ? (on ? '已配置' : '未配置') : '未知',
+    });
+    const cells = [h('span', { class: 'login-row__label', text: SOURCE_LABEL[key] }), pill];
+    if (LOGIN_PLATFORMS.includes(key)) {
+      const statusEl = h('span', { class: 'login-row__status' });
+      const btn = h('button', { type: 'button', class: 'btn btn--sm', text: '扫码登录' });
+      btn.addEventListener('click', () => void startLogin(key, btn, statusEl, pill));
+      const st = loginStates[key];
+      if (st?.status === 'waiting') {
+        btn.disabled = true;
+        btn.textContent = '等待扫码…';
+        statusEl.textContent = '等待扫码…';
+      } else if (st?.status === 'done') {
+        btn.disabled = true;
+        btn.textContent = '已完成';
+        statusEl.textContent = '已写入 cookie';
+      } else if (st?.status === 'failed' || st?.status === 'expired') {
+        statusEl.textContent = st.text || '';
+      }
+      cells.push(h('div', { class: 'login-row__action' }, [btn, statusEl]));
+    } else {
+      cells.push(h('span', { class: 'field__hint login-row__hint', text: '无需登录' }));
+    }
+    return h('div', { class: 'login-row' }, cells);
+  }
+
+  async function startLogin(platform, button, statusEl, pill) {
+    const st = loginStates[platform] || (loginStates[platform] = {});
+    if (st.status === 'waiting') return;
+    button.disabled = true;
+    button.textContent = '启动中…';
+    statusEl.textContent = '正在启动登录…';
+    try {
+      const payload = await api(`/api/login/${platform}`, { method: 'POST' });
+      st.sessionId = payload.sessionId;
+      st.status = 'waiting';
+      st.text = '等待扫码…';
+      button.textContent = '等待扫码…';
+      statusEl.textContent = '等待扫码…';
+      toast(`请在弹出的 Chrome 里扫码登录${SOURCE_LABEL[platform]}`);
+      pollLogin(platform, button, statusEl, pill);
+    } catch (error) {
+      st.status = 'failed';
+      st.text = errorText(error);
+      button.disabled = false;
+      button.textContent = '扫码登录';
+      statusEl.textContent = st.text;
+      toast(st.text);
+    }
+  }
+
+  function pollLogin(platform, button, statusEl, pill) {
+    const st = loginStates[platform];
+    if (st.timer) clearInterval(st.timer);
+    let ticks = 0;
+    st.timer = setInterval(async () => {
+      if (!button.isConnected) {
+        clearInterval(st.timer);
+        st.timer = null;
+        return;
+      }
+      ticks += 1;
+      if (ticks > 240) {
+        clearInterval(st.timer);
+        st.timer = null;
+        st.status = 'expired';
+        st.text = '登录超时，请重新发起；若一直无响应，请检查本机 Chrome 是否可用。';
+        button.disabled = false;
+        button.textContent = '扫码登录';
+        statusEl.textContent = st.text;
+        return;
+      }
+      try {
+        const payload = await api(`/api/login/${platform}/status?sessionId=${encodeURIComponent(st.sessionId ?? '')}`);
+        const status = payload.status;
+        if (status === 'waiting') {
+          statusEl.textContent = '等待扫码…';
+        } else if (status === 'done') {
+          clearInterval(st.timer);
+          st.timer = null;
+          st.status = 'done';
+          st.text = '已写入 cookie';
+          button.disabled = true;
+          button.textContent = '已完成';
+          statusEl.textContent = payload.account ? `已写入 cookie（${payload.account}）` : '已写入 cookie';
+          pill.classList.add('is-on');
+          pill.classList.remove('is-off');
+          pill.textContent = '已配置';
+          toast(`${SOURCE_LABEL[platform]}登录成功，已写入 cookie`);
+          void refreshData();
+        } else if (status === 'failed') {
+          clearInterval(st.timer);
+          st.timer = null;
+          st.status = 'failed';
+          st.text = '登录失败，请重新发起扫码。';
+          button.disabled = false;
+          button.textContent = '扫码登录';
+          statusEl.textContent = st.text;
+        } else if (status === 'expired') {
+          clearInterval(st.timer);
+          st.timer = null;
+          st.status = 'expired';
+          st.text = '登录已超时，请重新扫码。';
+          button.disabled = false;
+          button.textContent = '扫码登录';
+          statusEl.textContent = st.text;
+        }
+      } catch (error) {
+        clearInterval(st.timer);
+        st.timer = null;
+        st.status = 'failed';
+        st.text = errorText(error);
+        button.disabled = false;
+        button.textContent = '扫码登录';
+        statusEl.textContent = st.text;
+      }
+    }, 1500);
+  }
+
+  async function refreshData() {
+    try {
+      ctx.settings = await api('/api/settings');
+      if (typeof ctx.settings.demoMode === 'boolean') ctx.applyDemoMode?.(ctx.settings.demoMode);
+    } catch {
+      /* 静默刷新失败不打断当前页 */
+    }
   }
 
   function demoCard(settings) {

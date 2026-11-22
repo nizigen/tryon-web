@@ -23,6 +23,7 @@ const ctx = {
   importedItems: [],
   pendingPiece: null,
   balanceCents: 0,
+  applyDemoMode,
   onNavigate,
   onOpenProduct,
   onOpenImport,

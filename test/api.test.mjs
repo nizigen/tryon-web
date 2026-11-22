@@ -8,6 +8,7 @@ import { createApp } from '../src/app.mjs';
 import { createSourceService } from '../src/source.mjs';
 import { createStore } from '../src/store.mjs';
 import { createTryonService } from '../src/tryon.mjs';
+import { createWardrobe } from '../src/wardrobe.mjs';
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const PERSON = `data:image/png;base64,${PNG}`;
@@ -64,7 +65,22 @@ async function withServer(options = {}, run) {
     fetchImpl: options.sourceFetch ?? (async () => new Response(PNG_BYTES, { headers: { 'content-type': 'image/png' } })),
     settleMs: 0,
   });
-  const app = createApp({ env, fetchImpl, store, tryon, sources, resultsDir: join(dir, 'results') });
+  const app = createApp({
+    env,
+    fetchImpl,
+    store,
+    tryon,
+    sources,
+    wardrobe: options.wardrobe ?? createWardrobe({ dir, env, fetchImpl, sources, captioner: async () => '' }),
+    stylist: options.stylist ?? { suggest: async () => ({ slots: {}, reason: '', missing: [] }) },
+    login: options.login ?? {
+      start: async (platform) => ({ sessionId: `sess-${platform}` }),
+      status: async (platform, sessionId) => ({ platform, sessionId, status: 'pending' }),
+      cancel: async () => {},
+      dispose: async () => {},
+    },
+    resultsDir: join(dir, 'results'),
+  });
   await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${app.address().port}`;
   const call = async (path, init = {}) => {
@@ -86,7 +102,8 @@ async function withServer(options = {}, run) {
     await run({ call, base, store, tryon, dir, record: options.record ?? [] });
   } finally {
     await new Promise((resolve) => app.close(resolve));
-    await rm(dir, { recursive: true, force: true });
+    // 衣橱/结果的写入队列可能在关闭后仍在落盘，清理失败不应让用例假红。
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -386,7 +403,8 @@ test('重启后 pending 订单被对账为失败并退回余额', async () => { 
     assert.equal(after, before, '中断订单必须全额退回');
     assert.equal(store.listOrders(session.id)[0].status, 'failed');
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    // 衣橱/结果的写入队列可能在关闭后仍在落盘，清理失败不应让用例假红。
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 });
 

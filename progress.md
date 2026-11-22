@@ -185,3 +185,69 @@
 
 **错误与修正**
 - `public/lib/garment-taxonomy.js` 由子代理生成时整份中文被 GBK 覆写成乱码（`node --check` 不报错，因为它只查语法）。改为从 `data/taxonomy.json` 程序化生成（`artifacts/build-taxonomy.mjs`），并在全仓扫描 U+FFFD 确认 0 命中。
+## 2025-11-23 · v4：衣橱 + 扫码登录 + AI 今日穿搭 + 两级下拉
+
+**输入与决策**
+- 用户要求：①「前端为什么不做成两个下拉菜单，第一个是上衣首饰这些，第二个是具体分类」；②「上传页有一个默认的可选分类条目，右边放一个 + 继续添加」；③「抖音这些能不能做成扫码登录然后自动写入 cookie」；④「连接获取到的图片应该可以添加到我的衣橱，保存商品名和图片」；⑤「上传图片那里也应该可以从衣橱选择」；⑥「我的衣橱应该也支持上传图片」；⑦「我的衣橱已有衣服能不能做一个轻量的 RAG」；⑧「能够通过描述今天的需求让 AI 帮助选择今日穿搭并附上试穿图」；⑨「三视图给你帮我测一下，可以借鉴 GitHub 成熟实现，开几个 subagent」。
+- 契约落在 `docs/NEW_FEATURES.md`（v4 唯一接口约定：模块签名、路由、前端职责、样式归属）。四个子代理并行：衣橱 + 视觉描述、扫码登录、工作台两级下拉、衣橱/导入/设置三页前端；主代理自己写 AI 选搭、接线 `src/app.mjs` 与 `server.mjs`。
+
+**变更**
+- 新增后端模块：`src/wardrobe.mjs`（入库/取图/删除/BM25 检索，图片落 `data/wardrobe/`）、`src/caption.mjs`（视觉模型写一句中文描述）、`src/outfit.mjs`（AI 选搭 + 规则回退）、`src/login.mjs`（受控 Chrome + CDP 读全量 cookie，写 `data/cookies.json`）。
+- `src/app.mjs`：新增 11 条路由（衣橱 5 条、选搭 1 条、登录 3 条、衣橱取图 1 条、衣橱搜索 1 条）；`resolvePieces` 新增 `source.kind='wardrobe'` 分支（校验 id → 读图 → sniff → dataUrl）。
+- `server.mjs`：装配 wardrobe/captioner/stylist/login；SIGINT/SIGTERM 时 `server.close()` + `login.dispose()`。
+- 前端：`public/lib/dom.js` 新增 `createCascadeSelect`（两级联动，一级变更清空二级、无子类置灰）；`public/views/studio.js` 的单品从固定格子改为可增删条目 + 两级下拉 + 四来源（上传/衣橱/链接/目录）；新增 `public/views/wardrobe.js`（卡片、搜索、上传、今日穿搭全链路）与 `public/style-wardrobe.css`；`public/views/import.js` 每张缩略图加「加入衣橱」；`public/views/settings.js` 三平台扫码登录。
+- 演示模式下 `POST /api/tryon` 也关闭（承诺零上游消耗）。
+
+**验证（真实执行）**
+- `node --test` **127/127 通过**（新增衣橱 6、衣橱 API 7、登录 10、选搭 7、衣橱穿越 1、选搭补齐 1、衣橱格子错配 1、同名 cookie 取平台域 1、取消竞态 1）。
+- 真实链路：衣橱入库 4 件（视觉模型自动写描述，如「红底白色碎花短袖衬衫，棉质面料，休闲度假风」）→ 今日穿搭需求「今天去逛街，想穿得清爽又有精神，帮我配一套」→ 模型回上衣 + 下装并给理由、`missing:['shoes']` → 下单 201 → 30s success → 结果 1871400B（`artifacts/test/v4-ai-outfit.png`），目视确认身份与服装正确。
+- 浏览器实测：两级下拉展开七项；「＋ 添加单品」1→2 条；「从衣橱选」把类目与图片填进条目；导入页 13 张缩略图可「加入衣橱」（衣橱 4→5）；衣橱页上传后 5→6；工作台用真实正面全身照（512x1024）下单 201 → 结果图正常显示。
+- 登录：`POST /api/login/taobao` → 202 → 未扫码时状态保持 `waiting`（不再误判 done）；`cancel` 204。
+
+**修复的真机缺陷**
+- AI 选搭只用 BM25 检索，需求句不含单品关键词时零命中直接回「衣橱里还没有可用的单品」→ 改为检索为空时退回全量衣橱（最多 24 件）。
+- 衣橱与今日穿搭的图片带 `loading="lazy"`，后台会话里永不加载（空白卡片）→ 去掉懒加载。
+- `.section__title` 自带下外边距，放进横向 `.piece-head` 后与提示文字重叠 → `.piece-head .section__title { margin: 0 }`。
+- `.canvas img` 原为 `width:100%`，竖版结果图在 1440 视口被拉到 896×1792 → 改为 `width:auto; max-height:min(72vh,720px); margin-inline:auto`，实测 270×541。
+- 登录判据原用 `unb || cookie2`，未登录访客页也下发 `cookie2` → 误判成功并覆盖真实 cookie；改为只认 `unb`，并补「只有访客 cookie 不算登录成功」用例。
+- 导入页「加入衣橱」把大类写死成 `top`（套装被记成上衣），「用这件试穿」也只填上衣格 → 页面新增「这件属于哪一类」胶囊，入橱与试穿都按它走；实测选「下装」后入库 `category=bottom`。
+- 衣橱上传弹层只有大类、`subtype` 写死空串 → 改成两级下拉，实测选「下装 → 百褶裙」后入库 `bottom/百褶裙`。
+- 衣橱 `imageFile` 原先直接 `resolve(imageDir, fileName)`，索引被改成 `../../secret.png` 就能读到目录外 → 抽出 `imagePath()` 统一校验仍在 `data/wardrobe/` 内，并补穿越用例。
+- 选搭只用检索结果：只命中上衣时下装被判缺货 → 候选凑不成一套时从全量衣橱补齐（补「只命中上衣」用例）。
+
+**独立评审与修复（v4，基线含 v4 全部改动）**
+只读评审结论：无 P0，3 个 P1 + 9 个 P2。已全部落地：
+
+| 项 | 问题 | 修复 |
+| --- | --- | --- |
+| P1-1 | cookie 路径三处不一致（写用数据目录、读用 cwd）→ 从仓库根以外启动会「登录成功却一直显示未配置」 | `cookies.mjs` 第二参数统一为数据目录；`createApp` 新增 `dataDir` 并透传到 `handleSettingsRead`；`server.mjs` 两处都传 |
+| P1-2 | `source.mjs` 启动时把 cookie 读成快照，扫码登录后必须重启进程才生效 | 改为 `readJar()` 每次解析前重读文件（注入 `cookies` 时仍用固定值） |
+| P1-3 | 工作台轮询无上限、离开页面不停止；五件大图叠加会撞 24MiB 请求上限 | `POLL_MAX_TICKS=160`（≈4 分钟）、`root.isConnected` 检查、`payloadBytes()` 前端预判并禁用提交 |
+| P2-4 | `DELETE` 未纳入 Origin 校验 | 白名单改为 `POST/PATCH/DELETE` |
+| P2-5 | 衣橱单品可塞进任意格子（下装进上衣格）→ 生成张冠李戴 | 新增 `PIECE_SLOT_MISMATCH` 400 拦截 |
+| P2-6 | 演示模式 `/api/orders` 仍真实调用上游 | 决定保留（演示必须真出图），改文档与注释说明「不计费但会真实生成，直连接口关闭」 |
+| P2-7 | 演示模式 `outfit/suggest` 每次都打对话模型 | 新增 `suggestByRule()`，演示模式走规则挑选，不消耗上游额度 |
+| P2-8 | 登录轮询与取消竞态（`browser` 已被置空仍去取 cookie） | `checkOnce` 先取局部引用并判空 |
+| P2-9 | 同名 cookie 分属 taobao.com / tmall.com 时取错域 | `domainRank` 排序键加入平台域列表顺序 |
+| P2-10 | 衣橱无上限 | `MAX_ITEMS=500`，超限 413 `WARDROBE_FULL` |
+| P2-11 | 索引损坏被当空衣橱，下一次写入会永久覆盖 | 先备份为 `.corrupt-<ts>` 再以空索引继续 |
+| P2-12 | 设置页刷新后不回写演示状态 | `refresh()` 调用 `ctx.applyDemoMode()` |
+
+新增回归测试 4 条（衣橱格子错配、同名 cookie 取平台域、取消竞态、衣橱上限相关断言），全仓 **127/127 通过**（3291ms）。
+
+**评审修复后的真机复测（`DEMO_MODE=1`，`artifacts/probe-review-fixes.mjs`）**
+- `/api/config` → `demoMode=true slots=7`。
+- `/api/outfit/suggest` 演示模式走规则：返回 `top+bottom`、`missing:['shoes']`、理由「按衣橱里最接近你需求的单品挑了一套」（未调用上游对话模型）。
+- 衣橱 5 件；把下装塞进上衣格下单 → **400 `PIECE_SLOT_MISMATCH`**「这件单品是下装，不能放进上衣（内搭）」。
+- 扫码登录：start 202 → 9 秒后仍 `waiting`（未扫码不误判）→ cancel 204。
+- `/api/settings` 无 cookie 值泄漏。
+
+**未验证 / 已知缺口**
+- 真实手机扫码走通并写出 cookie 未验证（只验了不误判、只改当前平台键、并发 409、取消竞态）。
+- 五件满配真实出图未验证；裙 + 丝袜组合未验证。
+- AI 选搭依赖 the image service 对话模型；模型不可用时按规则回退，此时不理解自然语言需求。
+- 衣橱索引与图片是本机单进程 JSON + 文件，没有多实例并发控制。
+
+**错误与修正**
+- 工作台点「开始试穿」后读到 toast「图片编码、格式或内容无效」，一度以为是图片校验缺陷；抓网络层发现 `POST /api/orders` 实际 201、job success、结果图正常——那句是上一轮失败残留的 toast 文本（只 `hidden` 不 `textContent`），读 DOM 时误判。
+- `.picker__item` 的索引与衣橱列表顺序不一致（列表按 `createdAt` 倒序），按索引点会点错件；验收脚本改为按文案匹配。

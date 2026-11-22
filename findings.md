@@ -199,7 +199,27 @@
 - 已知短板：件数越多越容易串味；本轮只验证两件，五件满配未做真实对比。
 - 设计参考：`https://flyne.ai/cn/` 的令牌（`#0a0a0a` 底、`#111/#161616` 面板、白 10% 描边、卡片 20px/控件 8px/胶囊 999px、紫 `#7c3aed→#a855f7`、PingFang 字体栈）记录在 `docs/frontend-design-reference.md`，证据截图 `docs/evidence/flyne-*.png`。
 
-## 13. 支付与身份的边界
+## 13. 衣橱、扫码登录与 AI 选搭（实测：2025-11-23）
+
+**动机**：用户要求「两级下拉代替一长串选项」「默认一条 + 加号追加」「扫码登录自动写 cookie」「导入的商品图能加进衣橱」「上传处也能从衣橱选」「衣橱支持上传」「衣橱做轻量图文 RAG」「一句话让 AI 选今日穿搭并出试穿图」。
+
+| 问题 | 结论 | 依据 |
+|---|---|---|
+| 扫码登录能不能拿到 cookie | **能，但不能走 OpenCLI**：`opencli browser eval 'document.cookie'` 只给非 HttpOnly；`browser chrome call Network.getAllCookies` 返回 `unsupported_chrome_method`。自起 Chrome（`--user-data-dir` + `--remote-debugging-port`）+ CDP `Target.createTarget` / `attachToTarget` / `Network.getAllCookies` 实测拿到 31 条**含 HttpOnly** 的 cookie | `src/login.mjs`；探针 `cdp-probe.mjs` 输出含 `.taobao.com cookie2 [H]`、`_m_h5_tk`、`_tb_token_` |
+| 登录成功判据怎么定 | **只认真正的登录标识**：淘宝 `unb`、京东 `pt_key`、拼多多 `PASS_ID`。`cookie2` 在未登录访客页也会下发，用它当判据会误判成功并覆盖真实 cookie（实测踩到） | `src/login.mjs` 的 `isAuth`；`test/login.test.mjs` 新增「只有访客 cookie 不算登录成功」 |
+| 同名 cookie 取哪个 | 按 `domainRank`（带前导点 > 标签数 > 长度）取，`.taobao.com` 必须胜过 host-only 的 `login.taobao.com`——后者不会随商品页请求发出 | `src/login.mjs` 的 `domainRank` |
+| 衣橱检索怎么做 | 轻量 BM25：中文按单字 + 二元组切分，索引 name/description/subtype/category/tags，只回 score>0；入库时视觉模型自动写一句描述 | `src/wardrobe.mjs`；`src/caption.mjs` |
+| 视觉模型用哪个 | the image service 网关 `/v1/chat/completions` + `image_url` data URL 实测可用：`codex/gpt-6.1-sol` 200/5283ms 正确描述；`kiro/claude-sonnet-4-6` 429 月度额度用尽 | 网关实测；可用 `CAPTION_MODEL` 覆盖 |
+| AI 选搭为什么不能只用检索 | 用户需求句往往不含单品关键词（「今天去逛街，想穿得清爽一点」BM25 零命中 → 直接回「衣橱里还没有可用的单品」）。必须**检索为空时退回全量衣橱** | 真实跑通前的失败现场；修在 `src/outfit.mjs` |
+| 模型返回怎么防错 | 严格校验：id 必须存在于候选、category 必须与格子匹配、accessory ≤2、dress 与 top/bottom 互斥；任一非法整体判不可用，退回 `rulePick` | `src/outfit.mjs`；`test/outfit.test.mjs` 6 条 |
+| 为什么衣橱图不能用 lazy | OpenCLI 会话里 `document.visibilityState` 恒为 `hidden`，`loading="lazy"` 的图永不加载（`complete:false`、`naturalWidth:0`），页面表现为空白卡片 | 实测：手动改 `loading='eager'` 后 4 张全 `complete:true` |
+
+- 真实链路：衣橱入库 4 件（视觉模型自动写描述）→ 今日穿搭需求「今天去逛街，想穿得清爽又有精神，帮我配一套」→ 模型选出上衣+下装并给理由、`missing:['shoes']` → 下单 → 30s 出图 → `artifacts/test/v4-ai-outfit.png`（887x1774），逐张目视确认身份与服装正确。
+- 浏览器实测：两级下拉展开七项、加号 1→2 条、「从衣橱选」把类目与图片填进条目、导入页 13 张缩略图「加入衣橱」使衣橱 4→5、衣橱页上传 5→6、工作台用真实正面全身照下单 201 并出图。
+- 顺带修掉的真实视觉问题：`.canvas img` 原为 `width:100%`，竖版结果图在 1440 视口被拉到 896×1792（两屏多）；改为 `width:auto; max-height:min(72vh,720px); margin-inline:auto` 后 270×541 一屏可见。
+- **未验证**：真实手机扫码走通并写出 cookie（只验了「未扫码不误判」「只改当前平台键」「并发 409」）；五件满配真实出图；裙 + 丝袜组合。
+
+## 14. 支付与身份的边界
 
 - 本轮充值为本地模拟（POST /api/payments + /confirm），真实支付未接入：抖音小程序虚拟支付需要主体资质与 AppID，且虚拟服务支付必须走平台虚拟支付能力，不得引导站外支付。
 - 会话为本地设备标识派生的匿名会话，不是真实鉴权；对外署形态必须换成抖音/微信登录（code2session → openid）并把订单归属绑定到平台用户。

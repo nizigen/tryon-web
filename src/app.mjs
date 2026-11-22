@@ -70,7 +70,7 @@ function checkRequest(request, port, env) {
   const documentNavigation = pathname === '/' || pathname.endsWith('.html');
   const originAllowed = origin === undefined || origins.includes(origin.replace(/\/$/, ''));
   if (!originAllowed
-    || (['POST', 'PATCH'].includes(request.method) && origin === undefined && !env.PUBLIC_ORIGIN)
+    || (['POST', 'PATCH', 'DELETE'].includes(request.method) && origin === undefined && !env.PUBLIC_ORIGIN)
     || (request.headers['sec-fetch-site'] === 'cross-site' && !documentNavigation)) {
     throw new HttpError(403, 'FORBIDDEN_ORIGIN', '不接受跨站请求');
   }
@@ -214,7 +214,7 @@ async function handleConfig(context) {
 }
 
 async function handleSettingsRead(context) {
-  const { response, env, fetchImpl, clock, store } = context;
+  const { response, env, fetchImpl, clock, store, dataDir } = context;
   let models = [];
   let gatewayReachable = true;
   try {
@@ -227,7 +227,7 @@ async function handleSettingsRead(context) {
   // 只回「是否配置了 cookie」的布尔值；京东/抖音免登录恒为 true，绝不返回 cookie 内容。
   let cookies = {};
   try {
-    cookies = loadCookies(env);
+    cookies = loadCookies(env, dataDir);
   } catch {
     cookies = {};
   }
@@ -358,7 +358,7 @@ async function legacyGarment(context, { product }, input) {
  * 并按 source.kind 取每件的图。所有图必须在扣费前取到。
  */
 async function resolvePieces(context, rawPieces) {
-  const { store, sources, clock } = context;
+  const { store, sources, wardrobe, clock } = context;
   if (!Array.isArray(rawPieces) || rawPieces.length === 0) {
     throw new HttpError(400, 'INVALID_REQUEST', '请至少选择一件单品', 'pieces');
   }
@@ -404,6 +404,19 @@ async function resolvePieces(context, rawPieces) {
     } else if (source.kind === 'upload') {
       decodeImage(source.image, 'image');
       dataUrl = source.image;
+    } else if (source.kind === 'wardrobe') {
+      const wardrobeId = assertString(source.wardrobeId, 'wardrobeId', { max: 64 });
+      const image = await wardrobe.readImage(wardrobeId);
+      if (!image) throw new HttpError(404, 'WARDROBE_NOT_FOUND', '这件单品不在衣橱里', 'wardrobeId');
+      const mime = sniff(image.buffer);
+      if (!mime) throw new HttpError(400, 'INVALID_IMAGE', '衣橱里的这张图格式不支持', 'wardrobeId');
+      dataUrl = `data:${mime};base64,${image.buffer.toString('base64')}`;
+      const stored = await wardrobe.get(wardrobeId);
+      // 衣橱条目自带类目：放进不匹配的格子会把裙子当上衣交给模型，生成结果必然错。
+      if (stored?.category && stored.category !== slot) {
+        throw new HttpError(400, 'PIECE_SLOT_MISMATCH', `这件单品是${slotLabel(stored.category)}，不能放进${slotLabel(slot)}`, 'pieces');
+      }
+      name = stored?.name ?? '';
     } else {
       throw new HttpError(400, 'INVALID_REQUEST', '单品来源不合法', 'source');
     }
@@ -627,7 +640,8 @@ async function handlePaymentConfirm(context) {
 
 async function handleTryon(context) {
   const { response, request, env, fetchImpl, clock, allowSimulation } = context;
-  // 演示模式承诺零上游消耗：直连接口会绕过下单与占位，必须一并关闭。
+  // 直连接口绕过下单、占位与扣费：演示模式下它会让上游调用脱离演示流程，必须关闭。
+  // （演示模式的正常出图走 /api/orders，那条链路照常生成、只是不计费。）
   if (isDemoMode(env) || !allowSimulation) throw new HttpError(403, 'RAW_TRYON_DISABLED', '直连生成接口已关闭，请使用下单流程');
   const input = await readJsonBody(request, clock.signal);
   const model = assertString(input?.model, 'model', { max: 120 });
@@ -700,6 +714,102 @@ async function handleResult(context) {
   response.end(body);
 }
 
+/** 衣橱条目对外的视图：只给 id/名称/类目与图片地址，不暴露落盘路径。 */
+function wardrobeItemView(item) {
+  return {
+    id: item.id,
+    name: item.name,
+    category: item.category,
+    subtype: item.subtype ?? '',
+    tags: item.tags ?? [],
+    description: item.description ?? '',
+    source: item.source,
+    imageUrl: `/api/wardrobe/${item.id}/image`,
+    createdAt: item.createdAt,
+  };
+}
+
+async function handleWardrobeList(context) {
+  const { response, wardrobe } = context;
+  const items = await wardrobe.list();
+  sendJson(response, 200, { items: items.map(wardrobeItemView) });
+}
+
+async function handleWardrobeCreate(context) {
+  const { response, request, wardrobe, clock } = context;
+  const input = await readJsonBody(request, clock.signal);
+  const item = await wardrobe.add(input ?? {});
+  sendJson(response, 201, { item: wardrobeItemView(item) });
+}
+
+async function handleWardrobeDelete(context) {
+  const { response, wardrobe, wardrobeId } = context;
+  const ok = await wardrobe.remove(wardrobeId);
+  if (!ok) throw new HttpError(404, 'WARDROBE_NOT_FOUND', '这件单品不在衣橱里');
+  response.writeHead(204);
+  response.end();
+}
+
+async function handleWardrobeImage(context) {
+  const { response, wardrobe, wardrobeId } = context;
+  const image = await wardrobe.readImage(wardrobeId);
+  if (!image) throw new HttpError(404, 'WARDROBE_NOT_FOUND', '这件单品不在衣橱里');
+  response.writeHead(200, {
+    'content-type': image.mime,
+    'content-length': image.buffer.length,
+    'cache-control': 'private, max-age=300',
+    'x-content-type-options': 'nosniff',
+  });
+  response.end(image.buffer);
+}
+
+async function handleWardrobeSearch(context) {
+  const { response, request, wardrobe, clock } = context;
+  const input = await readJsonBody(request, clock.signal);
+  const query = assertString(input?.query, 'query', { max: 200 });
+  const limit = Math.min(Math.max(Number(input?.limit) || 8, 1), 20);
+  const results = await wardrobe.search(query, limit);
+  sendJson(response, 200, {
+    results: results.map((entry) => ({ item: wardrobeItemView(entry.item), score: entry.score })),
+  });
+}
+
+async function handleOutfitSuggest(context) {
+  const { response, request, stylist, clock, demoMode } = context;
+  const input = await readJsonBody(request, clock.signal);
+  // 每次建议最多等 25s 上游对话调用，且没有会话额度概念：演示模式直接按规则挑，
+  // 既不让一个公开演示页把网关打到限流，也不消耗上游额度。
+  const suggestion = demoMode
+    ? await stylist.suggestByRule(input?.request)
+    : await stylist.suggest(input?.request);
+  const slots = {};
+  for (const [slot, value] of Object.entries(suggestion.slots ?? {})) {
+    slots[slot] = Array.isArray(value) ? value.map(wardrobeItemView) : wardrobeItemView(value);
+  }
+  sendJson(response, 200, { suggestion: { slots, reason: suggestion.reason, missing: suggestion.missing } });
+}
+
+async function handleLoginStart(context) {
+  const { response, login, platform } = context;
+  const session = await login.start(platform);
+  sendJson(response, 202, { sessionId: session.sessionId });
+}
+
+async function handleLoginStatus(context) {
+  const { response, login, platform, url } = context;
+  const sessionId = url.searchParams.get('sessionId') ?? '';
+  if (!sessionId) throw new HttpError(400, 'INVALID_REQUEST', '缺少 sessionId', 'sessionId');
+  sendJson(response, 200, await login.status(platform, sessionId));
+}
+
+async function handleLoginCancel(context) {
+  const { response, request, login, platform, clock } = context;
+  const input = await readJsonBody(request, clock.signal).catch(() => ({}));
+  await login.cancel(platform, input?.sessionId);
+  response.writeHead(204);
+  response.end();
+}
+
 const ROUTES = [
   { method: 'GET', pattern: /^\/api\/config$/, handler: handleConfig },
   { method: 'GET', pattern: /^\/api\/settings$/, handler: handleSettingsRead },
@@ -716,6 +826,15 @@ const ROUTES = [
   { method: 'POST', pattern: /^\/api\/payments\/(?<paymentId>[^/]+)\/confirm$/, handler: handlePaymentConfirm },
   { method: 'POST', pattern: /^\/api\/sources$/, handler: handleSourceCreate },
   { method: 'GET', pattern: /^\/api\/sources\/(?<sourceId>[^/]+)\/(?<index>\d+)$/, handler: handleSourceImage },
+  { method: 'GET', pattern: /^\/api\/wardrobe$/, handler: handleWardrobeList },
+  { method: 'POST', pattern: /^\/api\/wardrobe$/, handler: handleWardrobeCreate },
+  { method: 'POST', pattern: /^\/api\/wardrobe\/search$/, handler: handleWardrobeSearch },
+  { method: 'DELETE', pattern: /^\/api\/wardrobe\/(?<wardrobeId>[^/]+)$/, handler: handleWardrobeDelete },
+  { method: 'GET', pattern: /^\/api\/wardrobe\/(?<wardrobeId>[^/]+)\/image$/, handler: handleWardrobeImage },
+  { method: 'POST', pattern: /^\/api\/outfit\/suggest$/, handler: handleOutfitSuggest },
+  { method: 'POST', pattern: /^\/api\/login\/(?<platform>taobao|jd|pdd)$/, handler: handleLoginStart },
+  { method: 'GET', pattern: /^\/api\/login\/(?<platform>taobao|jd|pdd)\/status$/, handler: handleLoginStatus },
+  { method: 'POST', pattern: /^\/api\/login\/(?<platform>taobao|jd|pdd)\/cancel$/, handler: handleLoginCancel },
   { method: 'POST', pattern: /^\/api\/tryon$/, handler: handleTryon },
   { method: 'GET', pattern: /^\/api\/results\/(?<file>[^/]+)$/, handler: handleResult },
 ];
@@ -730,7 +849,9 @@ function matchRoute(method, pathname) {
   return null;
 }
 
-export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, sources, timeoutMs = 120_000, resultsDir = RESULTS_DIR }) {
+export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, sources, wardrobe, login, stylist, timeoutMs = 120_000, resultsDir = RESULTS_DIR, dataDir }) {
+  // 数据目录与 server.mjs 传给 store/wardrobe/login 的是同一个：cookie 文件的读写必须落在同一处。
+  const resolvedDataDir = dataDir ?? resolve(resultsDir, '..');
   // 本机默认开放模拟充值与直连生成；一旦配置对外来源（部署形态）默认关闭，必须显式开启。
   const allowSimulation = env.ENABLE_SIMULATED_PAYMENTS === '1' || !env.PUBLIC_ORIGIN;
   const app = createServer(async (request, response) => {
@@ -761,11 +882,15 @@ export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, 
         store,
         tryon,
         sources,
+        wardrobe,
+        login,
+        stylist,
         clock,
         timeoutMs,
         allowSimulation,
         demoMode: isDemoMode(env),
         resultsDir,
+        dataDir: resolvedDataDir,
         ...route,
       });
     } catch (error) {

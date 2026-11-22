@@ -1083,8 +1083,13 @@ textarea::placeholder {
 }
 
 .canvas img {
-  width: 100%;
-  height: auto;
+  /* 试穿结果与人物照都是竖版长图（约 1:2），按宽度铺满会撑出两屏多；
+     限高后居中显示，既不裁切也不变形 */
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: min(72vh, 720px);
+  margin-inline: auto;
 }
 
 .compare {
@@ -1576,12 +1581,126 @@ textarea::placeholder {
   margin-left: auto;
 }
 
+/* ---------------- 两级联动胶囊与单品条目 ---------------- */
+
+/* 一级（大类）与二级（子类）并排：固定两列等宽，任何宽度下都不折行。 */
+.cascade {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+}
+
+.cascade .capsule-select {
+  width: 100%;
+  min-width: 0;
+}
+
+/* 条目标题行：左标题 + 说明，右侧操作（删除 / 添加单品）。 */
+.piece-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.piece-head .section__hint {
+  margin: 0;
+}
+
+/* 标题自带 12px 下外边距，放进横向的 .piece-head 后会把文字顶起来压到提示上。 */
+.piece-head .section__title {
+  margin: 0;
+}
+
+/* 「＋ 添加单品」：虚线描边，与条目卡片的实线边框区分开，避免误读为条目。 */
+.piece-add {
+  border-style: dashed;
+  border-color: var(--line);
+  color: var(--muted);
+  background: transparent;
+}
+
+.piece-add:hover:not(:disabled) {
+  border-color: var(--accent-2);
+  color: #c9a7ff;
+}
+
+.piece-add:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* 衣橱选择弹层：整屏遮罩 + 居中面板，点遮罩关闭。 */
+.picker {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .72);
+  overflow-y: auto;
+}
+
+.picker .card {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.picker__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+/* 一个可选单品：图在上、名称与类目在下，整块可点。 */
+.picker__item {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .16s ease, background-color .16s ease;
+}
+
+.picker__item:hover,
+.picker__item:focus-visible {
+  border-color: var(--accent-2);
+  background: var(--panel-3);
+}
+
+.picker__item img {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--panel-3);
+}
+
+.picker__item .piece__name,
+.picker__item .piece__source {
+  width: 100%;
+  min-width: 0;
+}
+
 /* 移动端触控目标 ≥44px（胶囊与筛选项在窄屏统一抬高） */
 @media (max-width: 767px) {
   .capsule-trigger,
   .capsule-item {
     height: 44px;
     line-height: 42px;
+  }
+
+  .picker__grid {
+    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
   }
 
   .filter,

@@ -1,5 +1,8 @@
 import { api } from '../lib/api.js';
-import { h, toast } from '../lib/dom.js';
+import { createCapsuleSelect, errorText, h, toast } from '../lib/dom.js';
+import { SLOTS } from '../lib/garment-taxonomy.js';
+
+const CATEGORY_OPTIONS = SLOTS.map((slot) => ({ value: slot.key, label: slot.label }));
 
 /**
  * 商品链接导入：粘贴链接 → 解析出缩略图网格 → 选一张 → 「用这件试穿」。
@@ -12,6 +15,13 @@ export function renderImport(root, ctx) {
   const parseBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '解析链接' });
   const errorEl = h('p', { class: 'error-text', hidden: true });
   const results = h('div', { class: 'import' });
+  // 「加入衣橱」时按这里选的大类入库：商品链接里没有可靠的类目字段，让用户自己指定最省事。
+  const categorySelect = createCapsuleSelect({
+    options: CATEGORY_OPTIONS,
+    value: 'top',
+    ariaLabel: '加入衣橱时的大类',
+    placeholder: '选择大类',
+  });
 
   urlInput.addEventListener('input', () => {
     state.url = urlInput.value.trim();
@@ -77,14 +87,16 @@ export function renderImport(root, ctx) {
         'aria-pressed': selected ? 'true' : 'false',
         'aria-label': `选择第 ${image.index + 1} 张图`,
       }, [
-        h('img', { src: thumbUrl(image), alt: `商品图 ${image.index + 1}`, loading: 'lazy' }),
+        h('img', { src: thumbUrl(image), alt: `商品图 ${image.index + 1}` }),
         selected ? h('span', { class: 'thumb__check', 'aria-hidden': 'true', text: '✓' }) : null,
       ]);
       item.addEventListener('click', () => {
         state.selected = image.index;
         paintResults();
       });
-      grid.append(item);
+      const addBtn = h('button', { type: 'button', class: 'btn btn--sm import__add', text: '加入衣橱' });
+      addBtn.addEventListener('click', () => void addToWardrobe(image, addBtn));
+      grid.append(h('div', { class: 'import__cell' }, [item, addBtn]));
     }
 
     const useBtn = h('button', {
@@ -99,10 +111,35 @@ export function renderImport(root, ctx) {
       head,
       grid,
       h('div', { class: 'import__foot' }, [
-        h('span', { class: 'field__hint', text: '选中的图会放进工作台「上衣」格，可在那里改到其它格子或新增单品。' }),
+        h('span', { class: 'field__hint', text: '选中的图会放进工作台对应的格子，可在那里改到其它格子或新增单品。' }),
         h('span', { class: 'push-end' }, [useBtn]),
       ]),
     );
+  }
+
+  async function addToWardrobe(image, button) {
+    if (!state.source) return;
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = '加入中…';
+    try {
+      await api('/api/wardrobe', {
+        method: 'POST',
+        body: {
+          sourceId: state.source.id,
+          sourceIndex: image.index,
+          name: state.source.title || '',
+          category: categorySelect.getValue(),
+          subtype: '',
+        },
+      });
+      toast('已加入衣橱');
+      button.textContent = '已加入';
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = previous;
+      toast(errorText(error));
+    }
   }
 
   function useThis() {
@@ -113,7 +150,7 @@ export function renderImport(root, ctx) {
     }
     const image = source.images.find((item) => item.index === state.selected) ?? source.images[0];
     ctx.pendingPiece = {
-      slot: 'top',
+      slot: categorySelect.getValue(),
       subtype: '',
       source: {
         kind: 'import',
@@ -136,6 +173,11 @@ export function renderImport(root, ctx) {
         h('span', { class: 'field__label', text: '商品链接' }),
         h('div', { class: 'inline-field' }, [urlInput, parseBtn]),
         errorEl,
+      ]),
+      h('div', { class: 'field' }, [
+        h('span', { class: 'field__label', text: '这件属于哪一类' }),
+        categorySelect.el,
+        h('span', { class: 'field__hint', text: '加入衣橱和拿去试穿时都按这个大类；商品页没有可靠的类目信息，所以让你自己选。' }),
       ]),
     ]),
     h('section', { class: 'card' }, [h('h2', { class: 'section__title', text: '解析结果' }), results]),
