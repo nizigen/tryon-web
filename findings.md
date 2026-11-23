@@ -8,7 +8,7 @@
   来源：https://developer.open-douyin.com/docs/resource/zh-CN/mini-app/operation/management/specification/ios-virtual-payment
 - 国家网信办等四部门《人工智能生成合成内容标识办法》（2025-03-14 印发）：AI 生成图片属"生成合成内容"，服务提供者须做显式标识与隐式标识。
   来源：http://www.cac.gov.cn/2025-03/14/c_1743654684782215.htm
-- 本机 the image service `tools/list` 实测模型目录（2025-11-22）：`codex/gpt-image-2`、`workbuddy/hunyuan-image-alpha`、`workbuddy-ai/hy-image-3.5`、`minimax-code/MiniMax-Image`；`generate_image` 支持 `quality`(low/medium/high/xhigh/max)、`complexity`、`size`、`reference_images`。
+- 本机图片网关 `tools/list` 实测模型目录（2025-11-22；当时用的是本机 MCP 网关，现已换成 OpenAI 兼容的图片 API）：`codex/gpt-image-2`、`workbuddy/hunyuan-image-alpha`、`workbuddy-ai/hy-image-3.5`、`minimax-code/MiniMax-Image`；`generate_image` 支持 `quality`(low/medium/high/xhigh/max)、`complexity`、`size`、`reference_images`。
 
 **推论**
 
@@ -43,7 +43,7 @@
 
 **问题**：原扩展在实操中会出现"衣服替换不到位、原衣服留一半"；生成结果偏 AI 味（光影、褶皱不真实）。原扩展服务端模板不可得（见 REA_REPORT.md，本项目自建提示词）。
 
-**实验**：用 the image service `codex/gpt-image-2`（quality=medium, size=1024x1536）以同一组合成素材（人物：白 T 恤 + 牛仔裤 + 白鞋；服装：红底白色小花短袖衬衫平铺图）对比三版提示词：
+**实验**：用图片服务 `codex/gpt-image-2`（quality=medium, size=1024x1536）以同一组合成素材（人物：白 T 恤 + 牛仔裤 + 白鞋；服装：红底白色小花短袖衬衫平铺图）对比三版提示词：
 
 - V0 = 仓库现有 `buildPrompt`；
 - V1 = 结构化分节（任务/输入角色、保留项、完全替换与去残影、服装保真、光影与褶皱自然、严格约束）；
@@ -71,7 +71,7 @@
 
 ## 5. 现有实现的可复用与需改造
 
-- 可复用：the image service 网关发现与 `generate_image` + pending 轮询、base64/MIME/magic 校验、限额与超时、Host/Origin 与 CSP、node --test 断言风格。
+- 可复用：网关发现与 `generate_image` + pending 轮询、base64/MIME/magic 校验、限额与超时、Host/Origin 与 CSP、node --test 断言风格。
 - 需改造：`server.mjs` 单文件（~400 行）要承载商品/定价/订单/会话，必须按模块拆分；`buildPrompt` 升级为分类 + 子类驱动的结构化提示词；前端从"表单工作台"改为"橱窗 + 试穿 + 结果"的产品结构，并去掉演示感文案与占位布局。
 - 保持：零依赖、不安装、不部署、仅本机运行与真实上游验证。
 
@@ -92,9 +92,9 @@
 1. **bottoms 是"叠加"不是"替换"**：给穿牛仔裤的人像 + 短裙平铺图，模型把裙子画在牛仔裤外侧（裙摆下仍露牛仔腿）。像素差分证明"已穿长裤的人像 + 同款裙子重跑"输出与上一次逐像素相同（max diff 11，改动像素 0）——模型判定裙子已存在，直接不改。换成穿短裤的底图后正常替换。连衣裙（one-pieces）同理：不脱原下装。
 2. **`ALL_PROXY=socks5://…` 会让 huggingface_hub 抛 `ImportError: Using SOCKS proxy, but the 'socksio' package is not installed`**；跑 python 前清掉 `ALL_PROXY`（保留 HTTP(S)_PROXY）即可。
 
-**与 the image service `codex/gpt-image-2` 的分工**：FASHN 本地零边际成本、版型/褶皱/印花还原更接近实拍、确定性可复现，但分辨率 576×864、手部细节弱、下装只能叠加；the image service 一次多参考即可同时换上下装并保持人物，1024×1536，但按次计费。**结论：多件搭配（整套 JK、连衣裙换长裤）走 the image service；单件替换走 FASHN 更划算。**
+**与图片服务 `codex/gpt-image-2` 的分工**：FASHN 本地零边际成本、版型/褶皱/印花还原更接近实拍、确定性可复现，但分辨率 576×864、手部细节弱、下装只能叠加；图片服务一次多参考即可同时换上下装并保持人物，1024×1536，但按次计费。**结论：多件搭配（整套 JK、连衣裙换长裤）走图片服务；单件替换走 FASHN 更划算。**
 
-**证据**：单件三分类对比图、原图 / FASHN 两件套 / the image service 一次成图的对比图均实测产出，因含模特照片已从仓库删除。
+**证据**：单件三分类对比图、原图 / FASHN 两件套 / 图片服务一次成图的对比图均实测产出，因含模特照片已从仓库删除。
 
 **未验证**：DWPose 因 onnxruntime 缺 `cublasLt64_13.dll`（需 CUDA 13）回落 CPU 推理，姿态估计未走 GPU；真实用户照片（侧身、逆光、多人）未测；显存上限只在 8GB 卡验证。
 
@@ -104,7 +104,7 @@
 
 **上身效果**：以用户模特的正面裁图（870×1306）+ 火星家商品图作双参考，`codex/gpt-image-2` 一次成图（1024×1536），脸/发型/身材/站姿/房间背景全部保持，衬衫领型、格纹领结、格纹百褶裙、过膝袜与乐福鞋按参考替换。该结果图含模特照片，已从仓库删除。
 
-**结论**：多件套装（上衣+下装+袜子+鞋）只有 the image service 这类多图参考模型能一次完成；FASHN 的叠加式下装约束决定了它做不了整套搭配。这条链路（真实商品图 → 上身图）就是"衣橱 + 搭配生成"的最小闭环，商品数据与图像都是真实抓取，不是合成素材。
+**结论**：多件套装（上衣+下装+袜子+鞋）只有多图参考的图片模型能一次完成；FASHN 的叠加式下装约束决定了它做不了整套搭配。这条链路（真实商品图 → 上身图）就是"衣橱 + 搭配生成"的最小闭环，商品数据与图像都是真实抓取，不是合成素材。
 
 **未验证**：淘宝商品图版权与商用授权未核（仅本地实验用途）；模特为虚构人物设定图，非真人；商品页价格随活动浮动，未做定时同步。
 
@@ -188,7 +188,7 @@
 | 问题 | 结论 | 依据 |
 |---|---|---|
 | 原扩展能不能叠穿 | **不能**：只支持单件单分类（clothing=tops/bottoms/dresses、jewelry、accessories 等），Live 模式是「≤12 look 逐个 switch」 | `docs/rea-tryiton-categories.md`（REA 静态分析） |
-| 叠穿怎么实现 | **一次多参考图生成**：人物图 + 按 `SLOT_ORDER` 排序的各件单品图，提示词按格分层描述 | `src/prompt.mjs` 的 `buildOutfitPrompt`；the image service `codex/gpt-image-2` 支持多张 `reference_images` |
+| 叠穿怎么实现 | **一次多参考图生成**：人物图 + 按 `SLOT_ORDER` 排序的各件单品图，提示词按格分层描述 | `src/prompt.mjs` 的 `buildOutfitPrompt`；`codex/gpt-image-2` 支持多张参考图 |
 | 为什么不用 FASHN 逐件叠 | FASHN 的 `bottoms` 是**叠加式**：裙子会画在裤子外侧而不是替换；两件套需先换底装再叠 | 本机 ComfyUI 实测（第 7 节） |
 | 七格怎么定 | `top/outer/bottom/dress/hosiery/shoes/accessory`；accessory ≤2；dress 与 top/bottom 互斥；总数 ≤5 | `docs/OUTFIT_MODEL.md` |
 | 品类词表哪来 | 淘宝搜索页的类目 facets 抓取，落 `data/taxonomy.json`，前端 `public/lib/garment-taxonomy.js` 由它程序化生成 | `docs/taobao-tags.md` |
@@ -209,7 +209,7 @@
 | 登录成功判据怎么定 | **只认真正的登录标识**：淘宝 `unb`、京东 `pt_key`、拼多多 `PASS_ID`。`cookie2` 在未登录访客页也会下发，用它当判据会误判成功并覆盖真实 cookie（实测踩到） | `src/login.mjs` 的 `isAuth`；`test/login.test.mjs` 新增「只有访客 cookie 不算登录成功」 |
 | 同名 cookie 取哪个 | 按 `domainRank`（带前导点 > 标签数 > 长度）取，`.taobao.com` 必须胜过 host-only 的 `login.taobao.com`——后者不会随商品页请求发出 | `src/login.mjs` 的 `domainRank` |
 | 衣橱检索怎么做 | 轻量 BM25：中文按单字 + 二元组切分，索引 name/description/subtype/category/tags，只回 score>0；入库时视觉模型自动写一句描述 | `src/wardrobe.mjs`；`src/caption.mjs` |
-| 视觉模型用哪个 | the image service 网关 `/v1/chat/completions` + `image_url` data URL 实测可用：`codex/gpt-6.1-sol` 200/5283ms 正确描述；`kiro/claude-sonnet-4-6` 429 月度额度用尽 | 网关实测；可用 `CAPTION_MODEL` 覆盖 |
+| 视觉模型用哪个 | 网关 `/v1/chat/completions` + `image_url` data URL 实测可用：`codex/gpt-6.1-sol` 200/5283ms 正确描述；`kiro/claude-sonnet-4-6` 429 月度额度用尽 | 网关实测；可用 `CAPTION_MODEL` 覆盖 |
 | AI 选搭为什么不能只用检索 | 用户需求句往往不含单品关键词（「今天去逛街，想穿得清爽一点」BM25 零命中 → 直接回「衣橱里还没有可用的单品」）。必须**检索为空时退回全量衣橱** | 真实跑通前的失败现场；修在 `src/outfit.mjs` |
 | 模型返回怎么防错 | 严格校验：id 必须存在于候选、category 必须与格子匹配、accessory ≤2、dress 与 top/bottom 互斥；任一非法整体判不可用，退回 `rulePick` | `src/outfit.mjs`；`test/outfit.test.mjs` 6 条 |
 | 为什么衣橱图不能用 lazy | OpenCLI 会话里 `document.visibilityState` 恒为 `hidden`，`loading="lazy"` 的图永不加载（`complete:false`、`naturalWidth:0`），页面表现为空白卡片 | 实测：手动改 `loading='eager'` 后 4 张全 `complete:true` |
@@ -232,3 +232,20 @@
 - 本轮充值为本地模拟（POST /api/payments + /confirm），真实支付未接入：抖音小程序虚拟支付需要主体资质与 AppID，且虚拟服务支付必须走平台虚拟支付能力，不得引导站外支付。
 - 会话为本地设备标识派生的匿名会话，不是真实鉴权；对外署形态必须换成抖音/微信登录（code2session → openid）并把订单归属绑定到平台用户。
 - 这两项是"能收钱"之前的硬前置，已写入 PRD 非目标与 BACKEND_STRUCTURE.md 的未验证说明。
+
+## 16. 图片服务的接口形状与模型可达性（实测：2025-11-23）
+
+**为什么要单独记**：把私有网关换成「任何 OpenAI 兼容图片服务」之后，真正决定能不能出图的不是我们的代码，而是对端三个端点的具体行为。这一节记的是实测到的形状差异，避免下次又按「OpenAI 文档怎么写就怎么是」去猜。
+
+| 观察 | 实测结果 | 影响 |
+| --- | --- | --- |
+| 生成端点 | `POST /v1/images/generations` 收 JSON `{model,prompt,size,quality,n,response_format}`，回 `{created,data:[{b64_json,mime_type}],model,usage}` | 无参考图时走这条 |
+| 编辑端点 | `POST /v1/images/edits` **只认 multipart**；同一请求改成 JSON 带 `image_url` 回 400「an edit needs the image to edit」 | 有参考图必须用 `FormData`，字段名单图 `image`、多图 `image[]` |
+| 回包字段 | 同一个服务里，有的模型回 `b64_json`，有的只回 `url`（`workbuddy/hunyuan-image-alpha` 的 edits 就回 url） | 取图逻辑要两者都认，不能只读 b64 |
+| 模型目录 | `GET /v1/models` 不需要密钥；93 条里只有 1 条标了 `modalities.output=["image"]`，而默认模型根本不在目录里 | 目录结果必须 ∪ `IMAGE_MODEL`，否则默认模型凭空消失 |
+| 未知模型 | 404，message 里带模型名 | 不能当成网络错误重试 |
+| 出口可达性 | 同一时刻：混元 200（16.4s）/ codex 502（`chatgpt.com` 连接超时）/ MiniMax 502「returned no images」/ hy-image-3.5 429 额度用尽 | 「模型列出来」≠「能出图」；失败原因必须原样转述给用户 |
+
+**教训**：上游 502 先读它自己的 `error.message`。我第一次看到 502 就怀疑 multipart 拼错，实际是上游出口网络不通——本地代理（`127.0.0.1:10808`）通，但网关进程不走代理。
+
+**顺带修的真实缺陷**：`state.json` 里存的模型名在换服务或模型下线后会变成孤儿，原逻辑让每次下单都报 `MODEL_UNAVAILABLE`，而下单页没有切换模型入口，用户无从修复。改为：存的模型不在当前目录时退回默认模型，`GET /api/settings` 报告的也是真正会用的那个。

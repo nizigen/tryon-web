@@ -1,11 +1,11 @@
 # 契约与实现独立审阅 — 2026-11-21
 
 ## 当前范围与六规范审阅
-本轮用户要求自动识别并选择 the image service 图片模型，取代此前 Decart/OpenAI 直接适配。用户已选择 C 分步试衣台；只支持 tops/bottoms/dresses，不扩展直播、配饰或原站账号。
+本轮用户要求自动识别并选择本机图片网关的模型，取代此前 Decart/OpenAI 直接适配。用户已选择 C 分步试衣台；只支持 tops/bottoms/dresses，不扩展直播、配饰或原站账号。
 
-主代理重新逐份读取 PRD.md、APP_FLOW.md、TECH_STACK.md、FRONTEND_GUIDELINES.md、BACKEND_STRUCTURE.md、IMPLEMENTATION_PLAN.md，并核对最终源码与 findings.md。当前文档作者为独立子代理 898c30a3-2821-4491-8882-f7f982a545fa，生产实现作者为 d20b4a04-99a6-4af9-96be-22b22ad9e49b；写与审分处不同上下文。六规范与现有 the image service 架构、已批准 C 视觉方向一致，批准继续最终验证。
+主代理重新逐份读取 PRD.md、APP_FLOW.md、TECH_STACK.md、FRONTEND_GUIDELINES.md、BACKEND_STRUCTURE.md、IMPLEMENTATION_PLAN.md，并核对最终源码与 findings.md。当前文档作者为独立子代理 898c30a3-2821-4491-8882-f7f982a545fa，生产实现作者为 d20b4a04-99a6-4af9-96be-22b22ad9e49b；写与审分处不同上下文。六规范与现有图片网关架构、已批准 C 视觉方向一致，批准继续最终验证。
 
-接口唯一来源为 BACKEND_STRUCTURE.md：/api/config 动态读取图片工具的 model.enum，/api/tryon 接受 model/person/garment/category/prompt；人物参考在前、服装参考在后。the image service 管理提供方凭据，应用不存储或回传密钥。发现模型不等于验证其健康。
+接口唯一来源为 BACKEND_STRUCTURE.md：/api/config 动态读取图片工具的 model.enum，/api/tryon 接受 model/person/garment/category/prompt；人物参考在前、服装参考在后。网关持有提供方凭据，应用不存储或回传密钥。发现模型不等于验证其健康。
 
 ## 最终后端代码与安全复核
 主代理完整读取最终 server.mjs，并亲自执行 Node v24.17.0 的语法检查与 node --test：22 项通过，0 失败，4244.9413 ms。

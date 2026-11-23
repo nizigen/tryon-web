@@ -5,12 +5,12 @@
 ```
 server.mjs            入口：node --env-file-if-exists=.env server.mjs
 src/app.mjs           HTTP 路由、中间件、静态资源、结果票据
-src/the image service.mjs        网关发现、模型目录、generate_image + pending 轮询
+src/imageapi.mjs      OpenAI 兼容图片服务：模型目录、images/generations 与 images/edits
 src/prompt.mjs        服装分类体系与结构化提示词
 src/pricing.mjs       按模型/档位的定价表与成本估算
 src/source.mjs        商品链接取图：平台识别、短链跟随、淘宝/抖音直连、OpenCLI 兜底、TTL 缓存
 src/wardrobe.mjs      我的衣橱：入库（上传 / 导入结果）、取图、删除、BM25 检索
-src/caption.mjs       视觉描述：调 the image service 对话模型给单品写一句中文描述（失败返回空串）
+src/caption.mjs       视觉描述：调对话模型给单品写一句中文描述（失败返回空串）
 src/outfit.mjs        AI 今日穿搭：检索候选 → 模型选搭（严格校验）→ 规则回退
 src/login.mjs         扫码登录：拉起受控 Chrome、CDP 读全量 cookie（含 HttpOnly）、写 cookies.json
 src/cookies.mjs       cookie 文件路径与读取
@@ -127,6 +127,9 @@ src/errors.mjs        统一错误类型
 | GET | /api/login/:platform/status | `?sessionId=` | `{ status, platform }`（未知 session 返回 `expired`） |
 | POST | /api/login/:platform/cancel | `{ sessionId }` | 204 |
 
+- **回包形状**：优先读 `data[0].b64_json`；服务只给 `data[0].url` 时，仅当该地址与 `IMAGE_API_BASE_URL` 同源才去取回，第三方地址一律拒绝并报 `UPSTREAM_FORMAT`（避免服务端被当成任意 URL 的取信通道）。
+- **目录不可用**：`GET /models` 连不上或没有该端点时退回 `IMAGE_MODEL`（默认 `codex/gpt-image-2`），不让整个功能失效；真正的可达性由生成请求自己报。
+
 ### 多件搭配（pieces）
 
 - 七个格子：`top` 上衣、`outer` 外套、`bottom` 下装、`dress` 连衣裙、`hosiery` 袜、`shoes` 鞋、`accessory` 配饰。
@@ -182,10 +185,10 @@ src/errors.mjs        统一错误类型
 - 请求体 ≤24MiB；输出图 ≤16MiB。
 - `prompt` ≤500 码点，只能细化面料/版型/场景；拼接时置于受控段并做单行化与限长。
 - `pieces`：`slot` 必须属于七格白名单；`garmentType` 必须属于该格的服装子类；每格至多一件（`accessory` 至多两件）；总数 ≤5；`dress` 与 `top`/`bottom` 互斥。
-- 模型必须出现在当前 `tools/list` 目录中；档位必须属于该模型，否则 400。
+- 模型必须出现在当前 `GET /v1/models` 目录中（或由 `IMAGE_MODELS` 显式指定）；档位必须属于该模型，否则 400。
 - 并发：同一会话同时只允许一个进行中任务（409）。
 - 商品链接：只接受 http/https，主机必须在平台白名单内；最多 40 张图；外部商品标题按不可信文本截断到 80 码点后才进提示词。
-- `PATCH /api/settings` 只接受 `model` 一个字段，长度 ≤120，且必须出现在当前网关模型目录里（否则 400 `MODEL_UNAVAILABLE`）。
+- `PATCH /api/settings` 只接受 `model` 一个字段，长度 ≤120，且必须出现在当前图片服务模型目录里（否则 400 `MODEL_UNAVAILABLE`）。
 - 衣橱：`id` 只允许 `[0-9a-f-]`，读取时二次校验落在 `data/wardrobe/` 内；`name`/`tags`/`description` 走 `sanitizeText`（去控制符、零宽、尖括号）。
 - `POST /api/outfit/suggest` 的 `request` ≤200 码点；AI 返回只用于选搭，任何字符串都当不可信文本渲染。
 - 扫码登录接口只允许 `taobao|jd|pdd`，不接收用户给的 URL 或路径；profile 目录固定为 `data/browser-profile/`。

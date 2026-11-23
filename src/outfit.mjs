@@ -1,13 +1,10 @@
+import { apiBaseUrl, apiKey } from './imageapi.mjs';
 import { HttpError } from './errors.mjs';
 import { sanitizeText } from './prompt.mjs';
 
 const SLOT_KEYS = ['top', 'outer', 'bottom', 'dress', 'hosiery', 'shoes', 'accessory'];
 const MAX_REQUEST_CHARS = 200;
 const MAX_ACCESSORY = 2;
-
-function gatewayBase(env) {
-  return (env.IMAGE_API_BASE_URL || 'http://127.0.0.1:3425').replace(/\/+$/, '');
-}
 
 /** 从模型回复里抠出第一个 JSON 对象（容许 ```json 围栏与前后废话）。 */
 function extractJson(text) {
@@ -106,12 +103,13 @@ export function createStylist({ env = process.env, fetchImpl = fetch, wardrobe }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error('timeout')), 25_000);
     try {
-      const response = await fetchImpl(`${gatewayBase(env)}/v1/chat/completions`, {
+      const key = apiKey(env, 'CHAT');
+      const response = await fetchImpl(`${apiBaseUrl(env, 'CHAT')}/chat/completions`, {
         method: 'POST',
         signal: controller.signal,
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${env.IMAGE_API_KEY || 'the image service'}`,
+          ...(key ? { authorization: `Bearer ${key}` } : {}),
         },
         body: JSON.stringify({
           model: env.STYLIST_MODEL || env.CAPTION_MODEL || 'codex/gpt-6.1-sol',

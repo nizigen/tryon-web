@@ -56,7 +56,7 @@ export function createWardrobe({ dir = 'data', fetchImpl = fetch, env = process.
 export function createCaptioner({ env = process.env, fetchImpl = fetch } = {})
 // 返回 { available: boolean, caption(buffer, mime): Promise<string> }
 ```
-- 走 the image service 网关 OpenAI 兼容接口：`POST {IMAGE_API_BASE_URL||http://127.0.0.1:3425}/v1/chat/completions`，`authorization: Bearer {IMAGE_API_KEY||'the image service'}`，模型 `env.CAPTION_MODEL || 'codex/gpt-6.1-sol'`。
+- 走 OpenAI 兼容的对话接口：`POST {CHAT_API_BASE_URL||IMAGE_API_BASE_URL}/chat/completions`，有 `CHAT_API_KEY` 或 `IMAGE_API_KEY` 时带 `authorization: Bearer`，模型 `env.CAPTION_MODEL || 'codex/gpt-6.1-sol'`。
 - 消息：文本「用一句中文描述这张图的服装：品类、颜色、材质、风格，不超过30字，不要标点结尾」+ `image_url` data URL。
 - 超时 20s；非 200 或空内容返回 `''`；任何异常都返回 `''`（绝不让入橱失败）。
 - 实测可用：`codex/gpt-6.1-sol` 约 5s 返回「灰色短款背心配同色短裤，脚穿白色细带拖鞋，整体简约休闲。」
@@ -93,7 +93,7 @@ export function createStylist({ env = process.env, fetchImpl = fetch, wardrobe }
 // }>
 ```
 - 实现：先用 `wardrobe.search(request, 12)` 拿到候选（按相关度），按每个候选的 `category` 分桶；
-- 若 the image service 对话模型可用（复用 `createCaptioner` 的网关配置），把「用户需求 + 候选清单（名称/类目/描述）」发给 `codex/gpt-6.1-sol`，要求返回 JSON `{ picks: { slot: itemId | itemId[] }, reason }`；**必须做严格校验**：只接受已存在且类目匹配的 id，返回非法 JSON 或超时则回退到规则选择。
+- 若对话模型可用（复用 `createCaptioner` 的接口配置），把「用户需求 + 候选清单（名称/类目/描述）」发给 `codex/gpt-6.1-sol`，要求返回 JSON `{ picks: { slot: itemId | itemId[] }, reason }`；**必须做严格校验**：只接受已存在且类目匹配的 id，返回非法 JSON 或超时则回退到规则选择。
 - 规则回退：按 `dress` 优先、否则 `top+bottom`，再补 `outer/hosiery/shoes/accessory`（各取相关度最高、类目匹配者）。
 - 返回的 `slots` 里必须是完整的 `Item` 对象，前端要能直接渲染图片与名称。
 

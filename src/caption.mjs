@@ -1,20 +1,15 @@
 /**
- * 单品图的一句话描述：走本机 the image service 的 OpenAI 兼容对话接口。
+ * 单品图的一句话描述：走 OpenAI 兼容的对话接口（可带图片输入）。
  *
- * 衣橱入库用它补 `description`。任何失败（网关不可用、非 200、空内容、超时）都返回空串，
+ * 衣橱入库用它补 `description`。任何失败（服务不可用、非 200、空内容、超时）都返回空串，
  * 绝不把异常抛给入库流程——描述只是锦上添花，不能阻断用户把单品收进衣橱。
  */
-
-/** 网关地址与密钥，与 src/outfit.mjs 保持同一套约定。 */
-function gatewayBase(env) {
-  return (env.IMAGE_API_BASE_URL || 'http://127.0.0.1:3425').replace(/\/+$/, '');
-}
+import { apiBaseUrl, apiKey } from './imageapi.mjs';
 
 const PROMPT = '用一句中文描述这张图的服装：品类、颜色、材质、风格，不超过30字，不要标点结尾';
 const TIMEOUT_MS = 20_000;
 
 export function createCaptioner({ env = process.env, fetchImpl = fetch } = {}) {
-  const base = gatewayBase(env);
   const model = env.CAPTION_MODEL || 'codex/gpt-6.1-sol';
 
   async function caption(buffer, mime) {
@@ -24,12 +19,13 @@ export function createCaptioner({ env = process.env, fetchImpl = fetch } = {}) {
     const timer = setTimeout(() => controller.abort(new Error('caption timeout')), TIMEOUT_MS);
     try {
       const dataUrl = `data:${mime};base64,${Buffer.from(buffer).toString('base64')}`;
-      const response = await fetchImpl(`${base}/v1/chat/completions`, {
+      const key = apiKey(env, 'CHAT');
+      const response = await fetchImpl(`${apiBaseUrl(env, 'CHAT')}/chat/completions`, {
         method: 'POST',
         signal: controller.signal,
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${env.IMAGE_API_KEY || 'the image service'}`,
+          ...(key ? { authorization: `Bearer ${key}` } : {}),
         },
         body: JSON.stringify({
           model,

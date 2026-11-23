@@ -3,7 +3,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { HttpError } from './errors.mjs';
-import { generateImage } from './the image service.mjs';
+import { generateImage } from './imageapi.mjs';
 
 const RESULT_TTL_MS = 24 * 60 * 60 * 1000;
 const JOB_RETENTION_MS = 30 * 60 * 1000;

@@ -20,19 +20,12 @@ function jsonResponse(payload) {
 }
 
 function makeFetch() {
-  return async (_url, options) => {
-    const request = JSON.parse(options.body);
-    if (request.method === 'tools/list') {
-      return jsonResponse({
-        jsonrpc: '2.0',
-        id: 1,
-        result: { tools: [{ name: 'generate_image', inputSchema: { properties: { model: { enum: MODELS } } } }] },
-      });
+  return async (url) => {
+    const target = String(url);
+    if (target.endsWith('/models')) {
+      return jsonResponse({ data: MODELS.map((id) => ({ id, modalities: { output: ['image'] } })) });
     }
-    if (request.params?.name === 'generate_image') {
-      return jsonResponse({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'image', mimeType: 'image/png', data: PNG }] } });
-    }
-    return jsonResponse({ jsonrpc: '2.0', id: 9, error: { message: 'unknown' } });
+    return jsonResponse({ created: 1, data: [{ b64_json: PNG, mime_type: 'image/png' }] });
   };
 }
 
@@ -41,7 +34,7 @@ async function withServer(options, run) {
   const catalogFile = join(dir, 'catalog.json');
   await writeFile(catalogFile, JSON.stringify({ products: [] }), 'utf8');
   const fetchImpl = makeFetch();
-  const env = { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425' };
+  const env = { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425/v1' };
   const store = createStore({ dir, catalogFile });
   await store.ready();
   const tryon = createTryonService({ store, env, fetchImpl, resultsDir: join(dir, 'results') });

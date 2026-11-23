@@ -61,7 +61,7 @@ char791939..827208包含 Lucy 模型/SDK schema、setPrompt/sendPrompt/initialPr
 OpenCLI拒绝chrome-extension://导航（HTTP/HTTPS限制），无原插件运行截图，不声称像素复刻。
 
 ## 当前独立实现与效果证据
-本轮 the image service 动态图片模型发现取代旧 Decart/OpenAI 直接适配。tools/list 的 generate_image.model.enum 当前四项：codex/gpt-image-2、workbuddy/hunyuan-image-alpha、workbuddy-ai/hy-image-3.5、minimax-code/MiniMax-Image。generate_image 明确 model/prompt/reference_images=[人物dataURL,服装dataURL]；pending由generation_result查询。此协议不证明原扩展静态后端采用同一模型。
+本轮动态图片模型发现（当时通过本机 MCP 网关，现已换成 OpenAI 兼容的图片 API）取代旧 Decart/OpenAI 直接适配。tools/list 的 generate_image.model.enum 当前四项：codex/gpt-image-2、workbuddy/hunyuan-image-alpha、workbuddy-ai/hy-image-3.5、minimax-code/MiniMax-Image。generate_image 明确 model/prompt/reference_images=[人物dataURL,服装dataURL]；pending由generation_result查询。此协议不证明原扩展静态后端采用同一模型。
 
 本项目仅保留已批准服装 tops/bottoms/dresses，语义对应原 clothing 二级项，不复制原 auto 与其他类别。buildPrompt 是本项目自建：分别限定替换上装/下装/连衣裙，保留非目标衣物、人物、鞋和背景，允许新服装自然轮廓。未恢复原服务器模板，不保证像素级保真。
 

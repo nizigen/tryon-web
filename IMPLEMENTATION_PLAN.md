@@ -14,7 +14,7 @@
 
 ## Step 2 — 后端模块化与商品/定价/订单
 
-- 拆分 `src/`：app / the image service / prompt / pricing / store / tryon / validate；保留 `server.mjs` 入口。
+- 拆分 `src/`：app / imageapi / prompt / pricing / store / tryon / validate；保留 `server.mjs` 入口。
 - 定价表按模型 × 档位；`GET /api/config` 返回模型、档位、单价、成本、分类、充值包。
 - 商品目录 `data/catalog.json`（含真实可用的示例商品与占位图路径）；`GET /api/products`、`GET /api/products/:id`。
 - 会话、订单、充值单与 JSON 原子持久化；下单冻结额度、成功扣减、失败退回。
@@ -29,7 +29,7 @@
 
 ## Step 4 — 真实链路验收
 
-- 本机 the image service 真实生成 tops/bottoms/dresses 各一次并人工查看替换完整性、光影自然度。
+- 真实图片服务生成 tops/bottoms/dresses 各一次并人工查看替换完整性、光影自然度。
 - 订单→任务→结果→扣费的真实 HTTP 链路走通一次。
 - 独立评审：后端契约与安全、前端可访问性与视觉，各自对最终版本复核。
 

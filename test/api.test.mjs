@@ -20,30 +20,43 @@ function jsonResponse(payload) {
   return new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } });
 }
 
-function makeFetch({ models = MODELS, pending = false, fail = false, record = [] } = {}) {
-  return async (_url, options) => {
-    const request = JSON.parse(options.body);
-    if (request.method === 'tools/list') {
-      return jsonResponse({
-        jsonrpc: '2.0',
-        id: 1,
-        result: { tools: [{ name: 'generate_image', inputSchema: { properties: { model: { enum: models } } } }] },
-      });
+/** 把 multipart 里的一张图还原成 data URL，方便断言「上游收到的到底是什么图」。 */
+async function toDataURL(blob) {
+  const buffer = Buffer.from(await blob.arrayBuffer());
+  return `data:${blob.type};base64,${buffer.toString('base64')}`;
+}
+
+/**
+ * 假的 OpenAI 兼容图片服务：GET /models 给目录，POST /images/edits 收 multipart，
+ * POST /images/generations 收 JSON；两种都回 data[0].b64_json。
+ * record 里记 {prompt, reference_images}，参考图还原成 data URL 以保留原有断言。
+ */
+function makeFetch({ models = MODELS, fail = false, slowMs = 0, record = [] } = {}) {
+  return async (url, options) => {
+    const target = String(url);
+    if (slowMs > 0) await new Promise((resolve) => setTimeout(resolve, slowMs));
+    if (target.endsWith('/models')) {
+      return jsonResponse({ data: models.map((id) => ({ id, modalities: { output: ['image'] } })) });
     }
-    if (request.params?.name === 'generate_image') {
-      record.push(request.params.arguments);
-      if (fail) {
-        return jsonResponse({ jsonrpc: '2.0', id: 2, result: { isError: true, content: [{ type: 'text', text: 'upstream failed' }] } });
+    if (fail) return new Response('upstream failed', { status: 500 });
+
+    let prompt = '';
+    const referenceImages = [];
+    if (target.endsWith('/images/edits')) {
+      for (const [key, value] of options.body.entries()) {
+        if (key === 'prompt') prompt = String(value);
+        else if ((key === 'image' || key === 'image[]') && typeof value !== 'string') {
+          referenceImages.push(await toDataURL(value));
+        }
       }
-      if (pending) {
-        return jsonResponse({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'text', text: 'still rendering' }], _meta: { 'image-service.local/pending': 'img_test_task' } } });
-      }
-      return jsonResponse({ jsonrpc: '2.0', id: 2, result: { content: [{ type: 'image', mimeType: 'image/png', data: PNG }] } });
+    } else if (target.endsWith('/images/generations')) {
+      const body = JSON.parse(options.body);
+      prompt = String(body.prompt ?? '');
+    } else {
+      return new Response('not found', { status: 404 });
     }
-    if (request.params?.name === 'generation_result') {
-      return jsonResponse({ jsonrpc: '2.0', id: 3, result: { content: [{ type: 'image', mimeType: 'image/png', data: PNG }] } });
-    }
-    return jsonResponse({ jsonrpc: '2.0', id: 9, error: { message: 'unknown' } });
+    record.push({ prompt, reference_images: referenceImages });
+    return jsonResponse({ created: 1, data: [{ b64_json: PNG, mime_type: 'image/png' }] });
   };
 }
 
@@ -56,7 +69,7 @@ async function withServer(options = {}, run) {
     ],
   }), 'utf8');
   const fetchImpl = options.fetchImpl ?? makeFetch({ ...options, record: options.record ?? [] });
-  const env = { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425', ...(options.env ?? {}) };
+  const env = { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425/v1', ...(options.env ?? {}) };
   const store = createStore({ dir, catalogFile });
   await store.ready();
   const tryon = createTryonService({ store, env, fetchImpl, resultsDir: join(dir, 'results') });
@@ -192,6 +205,21 @@ test('未知模型被拒绝', async () => {
   });
 });
 
+test('存下来的模型已不在目录里时退回默认模型，而不是每次下单都报不可用', async () => {
+  // 换服务地址或模型下线后，state 里存的模型名会变成孤儿；下单页无从修复，必须自动退回。
+  await withServer({ models: [MODELS[1]], env: { IMAGE_MODEL: MODELS[1] } }, async ({ call, store }) => {
+    await store.updateSettings({ model: MODELS[0] });
+    const session = await createSession(call);
+    const created = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', person: PERSON }),
+    });
+    assert.equal(created.status, 201);
+    const settings = await call('/api/settings');
+    assert.equal(settings.payload.model, MODELS[1]);
+  });
+});
+
 test('下单后任务成功、扣费并可取回结果', async () => {
   await withServer({}, async ({ call }) => {
     const session = await createSession(call);
@@ -232,8 +260,9 @@ test('生成失败时订单失败且额度退回', async () => {
   });
 });
 
-test('上游 pending 时轮询同一任务而不是重新生成', async () => {
-  await withServer({ pending: true }, async ({ call }) => {
+test('有参考图时走 /images/edits，把人物与商品图一起上传', async () => {
+  const record = [];
+  await withServer({ record }, async ({ call }) => {
     const session = await createSession(call);
     const created = await call('/api/orders', {
       method: 'POST',
@@ -241,22 +270,25 @@ test('上游 pending 时轮询同一任务而不是重新生成', async () => {
     });
     const job = await waitForJob(call, created.payload.jobId);
     assert.equal(job.status, 'success');
+    assert.equal(record.length, 1);
+    assert.equal(record[0].reference_images.length, 2, '人物 + 商品图 = 2 张参考图');
   });
 });
 
 test('同一会话同时只能有一个进行中的试穿任务', async () => {
-  await withServer({ pending: true }, async ({ call }) => {
+  await withServer({ slowMs: 400 }, async ({ call }) => {
     const session = await createSession(call);
     const body = JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON });
     const first = await call('/api/orders', { method: 'POST', body });
     assert.equal(first.status, 201);
     const second = await call('/api/orders', { method: 'POST', body });
     assert.equal(second.status, 409);
+    await waitForJob(call, first.payload.jobId);
   });
 });
 
 test('订单只对所属会话可见', async () => {
-  await withServer({ pending: true }, async ({ call }) => {
+  await withServer({ slowMs: 300 }, async ({ call }) => {
     const owner = await createSession(call);
     const created = await call('/api/orders', {
       method: 'POST',
@@ -267,6 +299,7 @@ test('订单只对所属会话可见', async () => {
     assert.equal(list.payload.orders.length, 0);
     const detail = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': other.payload.sessionId } });
     assert.equal(detail.status, 404);
+    await waitForJob(call, created.payload.jobId);
   });
 });
 

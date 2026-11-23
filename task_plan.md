@@ -1,10 +1,11 @@
-# Task Plan — TryOn Web v4
+# Task Plan — TryOn Web v5
 
 ## 当前目标与权限
 把本地单人试穿工作台升级为可对外运营的付费试穿产品：抖音穿搭号橱窗选衣 → 上传真人照 → 付费试穿 → 看到上身效果。
 平台决策（抖音小程序 + H5，不做 App）与定价（按模型成本分档）由用户授权我调研与决定。
 v3 追加：多件搭配（七格）、演示模式（隐藏付费）、模型入口移到设置页、前端仿 flyne 深色工作台。
 v4 追加：两级下拉 + 加号条目、扫码登录自动写 cookie、我的衣橱（上传/导入入库/检索/删除）、从衣橱选、AI 今日穿搭出图。
+v5 追加：把本机私有网关（MCP/JSON-RPC 协议）换成通用 OpenAI 兼容图片 API（`/v1/images/generations`、`/v1/images/edits`、`/v1/models`），代码、测试与文档里不再出现该品牌。
 边界：零依赖、不擅自部署、真实支付与真实用户体系未接入；本轮只交付本机可运行的完整链路。
 
 ## 阶段与检查点
@@ -30,7 +31,7 @@ v4 追加：两级下拉 + 加号条目、扫码登录自动写 cookie、我的�
 - [x] 提交并推送（`2e304fb` → nizigen/tryon-web master）
 - [x] v4：契约 `docs/NEW_FEATURES.md` + 4 个子代理并行（衣橱/登录/工作台/三页前端）
 - [x] v4：我的衣橱（`src/wardrobe.mjs`，上传 / 导入结果入库 / BM25 检索 / 删除 / 取图）
-- [x] v4：视觉描述（`src/caption.mjs`，the image service `codex/gpt-6.1-sol`，失败不影响入库）
+- [x] v4：视觉描述（`src/caption.mjs`，对话模型 `codex/gpt-6.1-sol`，失败不影响入库）
 - [x] v4：AI 今日穿搭（`src/outfit.mjs`，模型选搭 + 严格校验 + 规则回退 + 检索为空退回全量衣橱）
 - [x] v4：扫码登录（`src/login.mjs`，受控 Chrome + CDP 读全量 cookie，写 `data/cookies.json`）
 - [x] v4：工作台两级下拉（`createCascadeSelect`）+ 默认条目 + 加号追加 + 从衣橱选
@@ -39,6 +40,11 @@ v4 追加：两级下拉 + 加号条目、扫码登录自动写 cookie、我的�
 - [ ] v4：真实手机扫码走通并写出 cookie
 - [x] v4：提交推送（`fc25c4c` / `6c5a441`，历史重写后为 `3e860a8`）
 - [x] 内置模特（`public/model/model-front.png` + `public/lib/person.js`，工作台与今日穿搭默认预填，不传照片可直接出图）
+- [x] v5：原私有网关模块改为 `src/imageapi.mjs`（OpenAI 兼容三端点，JSON 或 multipart），env 改 `IMAGE_API_*` / `CHAT_API_*`
+- [x] v5：测试夹具重写为假 OpenAI 服务（`/models`、`/images/edits` 解析 multipart、`/images/generations` 解析 JSON），全量 137 项全绿
+- [x] v5：全仓品牌清理（59 个源/文档文件 0 命中），历史记录类文档保留事实只换称谓
+- [x] v5：真实网关端到端（`workbuddy/hunyuan-image-alpha` 多件下单 → 15s success → 1.6MB PNG）
+- [x] v5：存下来的模型已下线时自动退回默认模型（否则每次下单都报 MODEL_UNAVAILABLE，用户无从修复）
 
 ## 决策与约束
 - 提示词分层：保留项 / 完全替换与去残影 / 服装保真 / 光影与褶皱自然 / 禁止合成感 / 输出前自检；用户补充要求单独成段且不得覆盖区域与身份规则。
@@ -49,7 +55,7 @@ v4 追加：两级下拉 + 加号条目、扫码登录自动写 cookie、我的�
 
 ## 未验与交接
 - 真实支付与真实登录（抖音 code2session + 虚拟支付）未接入，充值为本地模拟。
-- 混元 / MiniMax 未做真实生成验证；混元成本为估值。
+- 混元 / MiniMax 未做真实生成验证；混元成本为估值。v5 期间混元是唯一真实出图的模型：`codex/gpt-image-2` 因出口网络不通返回 502、MiniMax 返回「no images」、hy-image-3.5 额度用尽 429。模型可达性属于部署环境，不是本项目状态。
 - 隐式 AI 标识与"外套保留内搭"的真实生成未验证。
 - 小程序端代码未写（本仓库交付 H5 与后端 API，小程序需另建工程并复用同一套 REST 接口）。
 - 商品链接导入：四家全部服务端直连、不开浏览器——淘宝 = 登录 cookie + mtop、抖音 = 分享数据 + ttwid、京东 = 手机版详情页 `window._itemOnly`（免登录）、拼多多 = `goods1.html` 的 `window.rawData`（需 pdd cookie）。OpenCLI 仅作直连失败时的可选兜底（`runCli:null` 可禁用），因此不装 OpenCLI 的机器也能取图。
@@ -61,6 +67,6 @@ v4 追加：两级下拉 + 加号条目、扫码登录自动写 cookie、我的�
 - 浏览器内文件上传受 OpenCLI `upload` 限制未打通，出图证据走接口链路。
 - 容器内安装了 chromium 仅用于本次 UI 验证，用户 Windows 机器上的 OpenCLI 通道可复跑同一流程。
 - v4 扫码登录：只验证了「未扫码不误判」「只改当前平台键」「并发 409」「超时 503」；真实手机扫码那一步未验证。登录判据只认 `unb`/`pt_key`/`PASS_ID`（`cookie2` 在访客页也会下发，不能当判据）。
-- v4 AI 选搭：依赖 the image service 对话模型（默认 `codex/gpt-6.1-sol`）；模型不可用时按规则回退，此时不理解自然语言需求。只做选搭，不做「生成多套候选」。
+- v4 AI 选搭：依赖 OpenAI 兼容的对话模型（默认 `codex/gpt-6.1-sol`）；模型不可用时按规则回退，此时不理解自然语言需求。只做选搭，不做「生成多套候选」。
 - v4 衣橱：单进程 JSON 索引 + 文件，没有多实例并发控制；图片与索引都在 `data/`（git-ignored），不随仓库分发。
 - v4 前端：衣橱与今日穿搭的图片刻意不用 `loading="lazy"`（后台会话里 `visibilityState` 为 `hidden`，懒加载永不触发）。

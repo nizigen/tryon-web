@@ -10,7 +10,7 @@
 - **导入商品链接**：粘贴淘宝 / 天猫、京东、拼多多、抖音商城的商品链接，**手机分享出来的整段文案也能直接粘**，读出商品图后可以挑一张放进格子，也可以**一键加入衣橱**。
 - **我的衣橱**：保存商品名与图片（可从上传、商品链接导入、导入结果里加），支持搜索、删除；按淘宝类目词表（上衣 12 类、外套 10 类、下装 12 类、连体 8 类、袜 10 类、鞋 12 类、配饰 12 类，共 7 组属性）浏览品类。每件单品入库时用视觉模型自动写一句描述，供检索与 AI 选搭使用。
 - **今日穿搭**：在衣橱页写一句需求（如「今天去逛街，想穿得清爽一点」），由对话模型在衣橱里挑一套并给出理由，再上传全身照直接出试穿图；模型不可用时按规则回退（连衣裙优先，否则上衣+下装，缺的格子会提示）。
-- **设置**：选图片模型（列出 the image service 当前可用的全部模型）、看取图来源是否就绪、**扫码登录**淘宝 / 京东 / 拼多多（自动写入 cookie，无需手工导出）、看网关连通性。**模型入口只在这里**，不在下单页。
+- **设置**：选图片模型（列出图片服务当前可用的模型）、看取图来源是否就绪、**扫码登录**淘宝 / 京东 / 拼多多（自动写入 cookie，无需手工导出）、看图片服务连通性。**模型入口只在这里**，不在下单页。
 - **结果**：原图与效果图对比；区域热点（上身/下身/全身叠加商品图）；可下载（文件名带 AI 标识）。
 - **演示模式**：`DEMO_MODE=1` 时全站隐藏价格与充值入口，下单不扣费也不校验余额；试穿仍会真实调用图片模型出图，直连生成接口（`/api/tryon`）关闭。
 
@@ -27,18 +27,22 @@ node --env-file-if-exists=.env server.mjs
 run-demo.cmd
 ```
 
-需要本机 the image service 在运行（提供图片模型、视觉/对话模型与凭据）。导入商品链接**四家都直连 HTTP，不需要浏览器**：淘宝用粘贴进来的登录 cookie 调 mtop；抖音用分享链接里的数据与 ttwid；京东读手机版详情页内嵌数据（免登录）；拼多多读 `goods1.html` 的内嵌数据（需要拼多多登录 cookie）。cookie 放在 `data/cookies.json`（JSON：`{"taobao":"...","douyin":"...","pdd":"..."}`，已被 `.gitignore` 忽略），也可以直接用 `TRYON_COOKIE_FILE` 指到别处；**扫码登录会自动写这个文件**，不用手工导出。**本机若装有 OpenCLI，只在直连失败时作为兜底**，没有 OpenCLI 也能正常取图。可用环境变量：
+需要有一个 OpenAI 兼容的图片服务在跑（提供 `/v1/images/generations`、`/v1/images/edits` 与 `/v1/models`），地址与密钥通过下面的环境变量配置；默认指向本机 `http://127.0.0.1:3425/v1`。导入商品链接**四家都直连 HTTP，不需要浏览器**：淘宝用粘贴进来的登录 cookie 调 mtop；抖音用分享链接里的数据与 ttwid；京东读手机版详情页内嵌数据（免登录）；拼多多读 `goods1.html` 的内嵌数据（需要拼多多登录 cookie）。cookie 放在 `data/cookies.json`（JSON：`{"taobao":"...","douyin":"...","pdd":"..."}`，已被 `.gitignore` 忽略），也可以直接用 `TRYON_COOKIE_FILE` 指到别处；**扫码登录会自动写这个文件**，不用手工导出。**本机若装有 OpenCLI，只在直连失败时作为兜底**，没有 OpenCLI 也能正常取图。可用环境变量：
 
 | 变量 | 作用 |
 | --- | --- |
-| `IMAGE_API_BASE_URL` | 覆盖 the image service 网关地址（默认读 `the configured API base URL`，文件不存在时回退 3425） |
-| `IMAGE_API_MCP_PATH` | 图片 MCP 路径，默认 `/v1/images` |
+| `IMAGE_API_BASE_URL` | 图片服务的根地址（含版本前缀），默认 `http://127.0.0.1:3425/v1` |
+| `IMAGE_API_KEY` | 图片服务的密钥，以 `Authorization: Bearer` 发送；留空则不发送该头 |
+| `IMAGE_MODEL` | 默认模型，默认 `codex/gpt-image-2`；会作为兜底项补进模型列表 |
+| `IMAGE_MODELS` | 逗号分隔的模型白名单；填了就不再请求 `/models`，直接用它 |
+| `IMAGE_TIMEOUT_MS` | 单次生成的等待上限（默认 120000） |
+| `CHAT_API_BASE_URL` / `CHAT_API_KEY` | 视觉描述与 AI 选搭用的对话服务；不填则复用图片服务的地址与密钥 |
+| `CAPTION_MODEL` | 衣橱单品描述用的视觉模型（默认 `codex/gpt-6.1-sol`） |
+| `STYLIST_MODEL` | 今日穿搭选搭用的对话模型（默认同 `CAPTION_MODEL`） |
 | `PUBLIC_ORIGIN` | 对外部署形态下允许的站点来源；本机默认只允许回环 |
 | `TRYON_COOKIE_FILE` | 淘宝 / 抖音 / 拼多多 cookie 文件路径（默认 `data/cookies.json`） |
 | `OPENCLI_ENTRY` | 覆盖 OpenCLI 入口脚本路径（默认在 PATH 里找 `node_modules/@jackwener/opencli/dist/src/main.js`），仅作为直连失败时的兜底 |
 | `OPENCLI_NODE` | 覆盖执行 OpenCLI 的 node 可执行文件（默认自动探测，用于避开 Electron 宿主 exe），仅作为直连失败时的兜底 |
-| `CAPTION_MODEL` | 衣橱单品描述用的视觉模型（默认 `codex/gpt-6.1-sol`） |
-| `STYLIST_MODEL` | 今日穿搭选搭用的对话模型（默认同 `CAPTION_MODEL`） |
 | `LOGIN_TIMEOUT_MS` | 扫码登录等待上限（默认 300000） |
 | `DEMO_MODE` | `1` 时进入演示模式：全站隐藏余额、价格、充值入口与订单金额，下单不扣费、不校验余额；试穿照常真实生成，直连接口 `/api/tryon` 关闭 |
 
@@ -46,7 +50,7 @@ run-demo.cmd
 
 ```text
 server.mjs          入口
-src/                app 路由 · the image service 网关 · prompt 提示词 · pricing 定价 · source 商品链接取图 · store 存储 · tryon 任务
+src/                app 路由 · imageapi 图片服务 · prompt 提示词 · pricing 定价 · source 商品链接取图 · store 存储 · tryon 任务
                     wardrobe 衣橱 · caption 视觉描述 · outfit AI 选搭 · login 扫码登录 · cookies cookie 读写
 public/             前端（index.html / style.css / style-wardrobe.css / app.js / lib / views）与商品图
 public/model/       内置模特图 model-front.png（工作台与衣橱默认填充的人物照）
@@ -74,8 +78,10 @@ node --test
 - **抖音商城只出主图**：分享链接的 `goods_detail` 只带一张主图（1440×1440），H5 详情页对浏览器一律风控，App 内的图集拿不到。抖音视频/图文帖走 ttwid + `_ROUTER_DATA`，能拿到封面/图集（一次性的 CDN 直链在解析时即取回缓存）。1688 需登录态，当前未接。
 - 四家取图都是服务端直连，不依赖浏览器、也不依赖本机 OpenCLI：京东免登录即可；淘宝需要 `data/cookies.json` 里的登录 cookie，拼多多需要 `pdd` 字段的登录 cookie（过期后重新扫码即可），抖音商品链接免登录。
 - **扫码登录未在真实手机扫码下验证**：已验证「未扫码时不误判为成功」「cookie 只改当前平台键」「并发 start 返回 409」；真实扫码走通并写出 cookie 的那一步还没跑过。
-- **AI 选搭依赖 the image service 的对话模型**：模型不可用或返回非法 JSON 时按规则回退，此时不会理解自然语言需求，只按品类补齐。
+- **AI 选搭依赖对话模型**：模型不可用或返回非法 JSON 时按规则回退，此时不会理解自然语言需求，只按品类补齐。
 - 多件穿搭靠一次多参考图生成，件数越多越容易串味；单件换装更稳。
+- **模型可达性由服务端决定，不是本项目的状态**：`/v1/models` 列出模型不代表它能出图。实测本机网关同一时刻 `workbuddy/hunyuan-image-alpha` 的生成与编辑都返回 200，`codex/gpt-image-2` 因出口网络不通返回 502，`minimax-code/MiniMax-Image` 返回「no images」，`workbuddy-ai/hy-image-3.5` 额度用尽返回 429。默认值给的是 `codex/gpt-image-2`，换成你自己环境里真能出图的模型用 `IMAGE_MODEL` 或 `IMAGE_MODELS` 指定；界面上的失败提示来自上游，不会静默换模型。
+- **图片要以内联方式返回**：请求里带 `response_format=b64_json`。服务仍只回 `url` 时，只有与接口同源的地址才会被取回；指向第三方的链接一律拒绝（不把服务端变成任意地址的取信通道）。
 - 提示词为本项目自建（原扩展服务端模板不可得），不保证像素级保真。
 - 结果图默认 24 小时后清理；人像照片不落盘。
 

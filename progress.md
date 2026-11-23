@@ -8,7 +8,7 @@
 - 平台决策与定价依据见 findings.md 第 1、2 节。
 
 ### 变更
-- 后端按模块拆分：`server.mjs`（入口）+ `src/{app,store,tryon,pricing,prompt,the image service,validate,errors}.mjs`。
+- 后端按模块拆分：`server.mjs`（入口）+ `src/{app,store,tryon,pricing,prompt,imageapi,validate,errors}.mjs`（v5 起由 imageapi 模块取代原网关模块）。
 - 提示词：结构化分节 + 服装子类（tops 7 类 / bottoms 4 类 / dresses 1 类），外套类走"替换外层、保留内搭"语义；商品标题进入提示词。
 - 新增商品目录（`data/catalog.json`，6 件商品，商品图为 AI 生成并在界面标注）、按模型 × 档位定价（`src/pricing.mjs`）、会话/订单/充值单 JSON 持久化（`data/state.json`，原子写）、异步试穿任务（下单冻结额度 → 生成 → 成功扣减 / 失败退回）。
 - 前端重做：橱窗（商品网格 + 分类筛选 + 搜索）→ 试穿页（模型/档位/上传/版型/补充要求）→ 结果页（原图对比、区域热点叠加、下载带 AI 标识）→ 我的（余额、充值、订单历史）。移动优先，底部固定 CTA。
@@ -17,7 +17,7 @@
 
 ### 验证（真实执行）
 - `node --test` → 39/39 通过（含扣费、失败退额、并发 409、pending 轮询、跨站拒绝、目录穿越拒绝）。
-- 本机 the image service 真实生成（gpt-image-2 / medium / 1024x1536）：
+- 本机图片服务真实生成（gpt-image-2 / medium / 1024x1536）：
   - tops（红花衬衫）→ 整件替换，无白色残影；
   - bottoms（黑牛仔裤）→ 下装完整替换；
   - dresses（黑缎面吊带裙）→ 上下装同时替换、保留鞋；
@@ -246,7 +246,7 @@
 **未验证 / 已知缺口**
 - 真实手机扫码走通并写出 cookie 未验证（只验了不误判、只改当前平台键、并发 409、取消竞态）。
 - 五件满配真实出图未验证；裙 + 丝袜组合未验证。
-- AI 选搭依赖 the image service 对话模型；模型不可用时按规则回退，此时不理解自然语言需求。
+- AI 选搭依赖 OpenAI 兼容的对话模型；模型不可用时按规则回退，此时不理解自然语言需求。
 - 衣橱索引与图片是本机单进程 JSON + 文件，没有多实例并发控制。
 
 **错误与修正**
@@ -273,3 +273,33 @@
 **未验证**
 - 内置模特是真人风格照片，用于对外演示前需确认肖像来源合规（当前来自用户提供的稿定作品）。
 - 只验证了单件；多件与内置模特的组合未单独复测。
+
+## 2025-11-23 · v5：把私有网关换成通用 OpenAI 兼容图片 API
+
+**输入与决策**
+- 用户要求：readme 里不要再出现那个私有网关的名字，改成正常的 API 填法，仓库他自己手动删。目标是把品牌与私有 MCP 协议整体换成通用写法，删库由用户自己动手。
+- 实测本机网关的 HTTP 形状（决定改法）：`POST /v1/images/generations` 收 JSON、`POST /v1/images/edits` **只认 multipart**（JSON `image_url` 写法回 400「an edit needs the image to edit」）、`GET /v1/models` 不需要密钥、未知模型回 404。
+- 模型目录不能只按 `modalities.output` 过滤：93 个模型里只有 `minimax-code/MiniMax-Image` 标了图片输出，默认模型 `codex/gpt-image-2` 根本不在目录里却照样能出图。做法是目录结果 ∪ `IMAGE_MODEL`，或由 `IMAGE_MODELS` 直接给定。
+
+**变更**
+- 新增 `src/imageapi.mjs`（取代并删除原来的私有网关模块）：`apiBaseUrl/apiKey`（支持 `IMAGE_*` 与 `CHAT_*` 两套前缀）、`listModels`、`generateImage`（有参考图走 multipart `image[]`，无图走 JSON）、`deadline`。删掉 JSON-RPC、SSE 兼容与 pending 轮询全部逻辑。
+- `src/caption.mjs`、`src/outfit.mjs` 改用 `apiBaseUrl(env,'CHAT')` + `apiKey(env,'CHAT')`；`src/app.mjs`、`src/tryon.mjs` 的 import 指向新模块。
+- `src/app.mjs` 新增两处兜底：下单时若 `state.json` 里存的模型已不在目录中，退回默认模型而不是每次报 `MODEL_UNAVAILABLE`；`GET /api/settings` 对外报告的也是真正会用的那个模型。
+- 测试：`test/api.test.mjs` 与 `test/wardrobe-api.test.mjs` 的假上游整体重写为 OpenAI 兼容服务（`/models`、multipart `/images/edits`、JSON `/images/generations`），新增「存下来的模型已不在目录里时退回默认模型」。
+- 文档：README（运行前提、14 行环境变量表、目录、模型可达性边界）、`.env.example`（整份重写）、AGENTS（架构与模型来源）、TECH_STACK（表格与模型目录小节）、BACKEND_STRUCTURE（模块表与校验条）、PRD / IMPLEMENTATION_PLAN / task_plan / docs/NEW_FEATURES。历史记录类文档（findings / progress / CONTRACT_REVIEW / REA_REPORT / douyin 可行性）保留当时事实，只把品牌名换成「本机图片网关」。
+
+**验证**
+- `node --test` **128/128 pass**（4.3s）；`node --check` 对 imageapi / caption / outfit / app / tryon / server 全部 exit 0。
+- 补 `test/errors.test.mjs` 5 条（OpenAI 形状 message、裸 message 与纯文本、抹凭据压一行、超长截断、有无原因两种文案）后全量 **133/133 pass**（4.4s）。
+- 又补 `test/imageapi.test.mjs` 4 条（服务只回 url 时同源取回、第三方 url 拒绝代取、上游 429 原因透传、目录不可达退回 `IMAGE_MODEL`），并修掉 `abortable` 在无 signal 时泄漏 rejection 的真实缺陷，全量 **137/137 pass**（4.6s）。
+- 全仓扫描（59 个 `.mjs/.js/.json/.md`，排除 .git/artifacts/data）：私有网关的名字 **0 命中**，原模块文件已不存在；15 个文档 U+FFFD 0。
+- 真实网关：`workbuddy/hunyuan-image-alpha` 生成 200（16.4s）、编辑 200（9.7s）；`codex/gpt-image-2` 两条通道都 502（`chatgpt.com` 出口连接超时，本机代理 10808 通但网关进程不走它）；`minimax-code/MiniMax-Image` 502「returned no images」；`workbuddy-ai/hy-image-3.5` 429 额度用尽。
+- 真实端到端（`artifacts/probe-v5-real.mjs`）：演示模式、`IMAGE_MODELS=workbuddy/hunyuan-image-alpha` → 会话 690 分 → 多件下单（上衣 + 下装）201 `slots:["top","bottom"]` `priceCents:0` → 轮询 15s success → 结果 1627042 字节 PNG，目视确认模特换上红底白花短袖衬衫与浅蓝直筒牛仔裤、脸与站姿保持。
+
+**未验证**
+- 除混元外的模型在真实环境能否出图取决于部署方的出口网络与额度，本项目只负责如实转述上游错误。
+- 演示模式之外的计费链路本轮未再回归（v4 已验，v5 只改了上游协议层）。
+
+**错误与修正**
+- 第一次跑真实探针报 `502 UPSTREAM_ERROR`，一度怀疑 multipart 拼错；用 `artifacts/probe-edits-debug.mjs` 打出上游原文才发现是 `chatgpt.com` 连接超时，与代码无关。教训：上游 502 先看它自己的 error.message，不要先怀疑本地拼装。
+- 用 `node -e` 内联脚本改中文文档时，双引号与反斜杠被 PowerShell 吞掉导致语法错误；改为把脚本写成 `artifacts/*.mjs` 文件再执行，稳定可靠。

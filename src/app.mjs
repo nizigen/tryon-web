@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { loadCookies } from './cookies.mjs';
 import { HttpError } from './errors.mjs';
-import { generateImage, listModels, deadline } from './the image service.mjs';
+import { generateImage, listModels, deadline } from './imageapi.mjs';
 import { buildOutfitPrompt, buildTryonPrompt, CATEGORIES, FITS, GARMENT_TYPES, garmentTypeLabel, isCategory, isGarmentType, isSlot, orderPieces, sanitizeText, SLOTS, slotLabel } from './prompt.mjs';
 import { priceCatalog, resolveTier } from './pricing.mjs';
 import { assertString, decodeImage, MAX_BODY_BYTES, MAX_IMAGE_BYTES, MAX_PROMPT_CHARS, sniff } from './validate.mjs';
@@ -232,7 +232,8 @@ async function handleSettingsRead(context) {
     cookies = {};
   }
   sendJson(response, 200, {
-    model: settings.model ?? catalog.defaultModel,
+    // 存下来的模型可能已经不在当前目录里，这时对外报告真正会用的那个。
+    model: settings.model && models.includes(settings.model) ? settings.model : catalog.defaultModel,
     models: catalog.models,
     demoMode: isDemoMode(env),
     sources: {
@@ -452,8 +453,11 @@ async function handleOrderCreate(context) {
   const models = await listModels(env, fetchImpl, clock.signal);
   const settings = store.getSettings();
   const requested = input?.model;
+  // 存下来的模型可能已经不在当前目录里（换了服务地址或模型下线）。这时退回默认模型，
+  // 而不是让每一次下单都报 MODEL_UNAVAILABLE——用户在下单页无从修复。
+  const saved = settings.model && models.includes(settings.model) ? settings.model : null;
   const model = requested === undefined || requested === null || requested === ''
-    ? (settings.model ?? priceCatalog(models).defaultModel ?? null)
+    ? (saved ?? priceCatalog(models).defaultModel ?? null)
     : assertString(requested, 'model', { max: 120 });
   if (!model || !models.includes(model)) {
     throw new HttpError(400, 'MODEL_UNAVAILABLE', '所选模型已不可用，请重新加载配置', 'model');

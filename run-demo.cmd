@@ -1,6 +1,6 @@
 @echo off
-REM 演示模式启动：全站隐藏余额/价格/充值，试穿不扣费。
-REM 需要真实计费时改用：node --env-file-if-exists=.env server.mjs
+REM Demo mode: hides balance, prices and top-up, and does not charge for try-on.
+REM For real billing, run: node --env-file-if-exists=.env server.mjs
 setlocal
 cd /d "%~dp0"
 set DEMO_MODE=1

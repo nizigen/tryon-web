@@ -32,7 +32,7 @@
 
 ## 3. ComfyUI 与本机能力
 
-实测环境：RTX 5060 Laptop，**8151 MiB 显存**（Blackwell sm_120，需 CUDA 12.8+ 的 PyTorch）；本机**未安装 ComfyUI**、未安装 torch；the image service 的 ComfyUI 连接为空。`torch 2.10.0+cu128-cp313-win_amd64` 官方轮子存在，Blackwell 可跑。
+实测环境：RTX 5060 Laptop，**8151 MiB 显存**（Blackwell sm_120，需 CUDA 12.8+ 的 PyTorch）；本机**未安装 ComfyUI**、未安装 torch；图片网关的 ComfyUI 连接为空。`torch 2.10.0+cu128-cp313-win_amd64` 官方轮子存在，Blackwell 可跑。
 
 试穿模型取舍（均为真实文档参数）：
 
