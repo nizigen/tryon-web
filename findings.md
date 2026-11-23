@@ -264,3 +264,14 @@
 **默认模型升级**：`codex/gpt-image-2` → `codex/gpt-image-2.5`。实测（`artifacts/test/image25-edit.png`、`artifacts/test/v5-model25-order.png`）：`/images/generations` 200/15.9s、`/images/edits` 双参考图 multipart 200/29.2s，均返回 `image/png`；真实下单 201 → 33s success → 2138410 字节 PNG，订单 `model` 字段确认 `codex/gpt-image-2.5`。同目录下 `openai/gpt-image-2.5` 404、`workbuddy/gpt-image-2.5` 400（route config 不存在）——**模型名是服务端私有的，必须以本机实测为准**。
 
 **教训**：「转圈不转」要先分清是**动画没跑**还是**动画在视口外/根本不存在**。前者查 CSS 与 `getAnimations()`，后者要量 `getBoundingClientRect().y` 与 `scrollY`。只看截图会误判成前者。
+
+## 2026-11-23 前端重构选择稿
+
+- 已同步 `e54b6f1`，新版链接导入归衣橱弹窗；删除/编辑仍常驻卡片，新稿将它们归入单品「更多」菜单。生产改动待选版后实施。
+- 用户上传的是设计参考库导出，解压至 `/root/github/设计参考/`，已读 README、路由笔记并按组件/AI 交互方向检索目录；这是用户直接提供的材料，本机不存在 Windows Obsidian vault，不伪称已调用 Obsidian。
+- 复用仓库六张 `public/catalog/*.jpg` 与内置模特，不复制外部品牌资产；生产栈仍是原生 ESM/CSS，预览同栈，不加依赖。具体方向、来源与待选状态见 `design/directions.md` 的本轮章节。
+- UI/UX Pro Max design-system 搜索返回营销滚动叙事、玫红配色，和工作型试穿页面不匹配，未直接采纳；采用其可访问性、44px 触控、错误/加载反馈、渐进披露与最多五项底部导航原则。未使用其 GSAP 代码，也未新增第二份视觉规范。
+- 预览所有可编辑数据只保存在内存；HTML 模板插值转义，DOMParser 后按标签/属性/本地 URL 白名单过滤再挂载；无 API 调用、账号登录、付费生成或真实删除。
+- 原先 screenshot 的人物网格项被固有尺寸撑大，已在图片归属处设绝对定位与 contain；13 个最终渲染场景重新检查，无溢出/破图/人物越界/脚本异常。截图方法只用于渲染与只读度量，不作为交互验收。
+- OpenCLI `BROWSER_CONNECT`（扩展未连接）；Huashu lint 缺 Python Playwright 跳过；LSP 默认 biome 等服务缺失。保留这些缺口，未安装工具或更换交互驱动。
+

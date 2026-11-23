@@ -76,3 +76,14 @@ v5 追加：把本机私有网关（MCP/JSON-RPC 协议）换成通用 OpenAI �
 - v4 AI 选搭：依赖 OpenAI 兼容的对话模型（默认 `codex/gpt-6.1-sol`）；模型不可用时按规则回退，此时不理解自然语言需求。只做选搭，不做「生成多套候选」。
 - v4 衣橱：单进程 JSON 索引 + 文件，没有多实例并发控制；图片与索引都在 `data/`（git-ignored），不随仓库分发。
 - v4 前端：衣橱与今日穿搭的图片刻意不用 `loading="lazy"`（后台会话里 `visibilityState` 为 `hidden`，懒加载永不触发）。
+
+## 2026-11-23 当前任务：全站前端重构
+
+- [x] 重启最新应用服务；确认 `/` 返回 200。
+- [x] 再次快进远端至 `e54b6f1`，纳入衣橱内链接导入弹窗。
+- [x] 解压用户设计参考包，按 vibe-coding 前端轨道和 UI/UX Pro Max 产出 A/B/C 三版可点击预览与三个轻量备选。
+- [x] 预览覆盖工作台、衣橱、今日穿搭入口、设置、记录，以及编辑/删除/导入弹窗；13 个截图场景验证 1440/768/390 无横向溢出。
+- [ ] 用户选择 A/B/C 或组合（入口 `/design-demos/index.html`；证据与边界见 `design/directions.md`、`findings.md`）。
+- [ ] 按选版更新 FRONTEND_GUIDELINES / APP_FLOW / IMPLEMENTATION_PLAN，并在现有 API 与原生 ESM 栈上改造正式页面。
+- [ ] 恢复 OpenCLI 桥接后做真实交互回归、独立代码与视觉评审，运行受影响测试并提交最终实现。
+

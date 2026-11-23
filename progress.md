@@ -433,3 +433,14 @@ ode --test\ 137/137 通过。
 **未验**
 - 只实测了拼多多一条真实链接的解析入橱；淘宝/京东/抖音走同一 `/api/sources` 路径但本轮未逐平台点。
 - 真实手机未复测（仅 390 视口模拟）。
+
+## 2026-11-23 全站重构：三方向选择稿
+
+- 用户授权后应用服务重启成功，PID 1238993，`127.0.0.1:43130/` 返回 200；随后又快进远端到 `e54b6f1`，该次仅前端与文档变更，运行实例读取最新静态源码。
+- `/root/github/设计参考.zip` 解压为 `/root/github/设计参考/` 五份索引笔记；按 vibe-coding / design-reference / design-taste-frontend / huashu-design / UI/UX Pro Max 流程准备本轮选择稿。
+- 新增 `public/design-demos/`：A 摄影工作台、B 衣橱搭配室、C 轻量分步试穿，含四视图、今日穿搭入口与编辑/删除/导入弹窗示例；编辑/删除收进更多菜单。`index.html` 可直接横向比较三版，并查看 D/E/F 轻量构图。素材复用本地图片，所有交互仅影响样例内存。
+- 方向与参考证据追加到 `design/directions.md`；生产 FRONTEND_GUIDELINES 尚未改写，等待本轮用户选版。
+- `node --check public/design-demos/preview.js` 通过；13 个最终 Chromium 渲染场景：三版各 1440/768/390，加 A/C 桌面衣橱、A 桌面设置、A 手机衣橱。均 `scrollWidth === innerWidth`、破图 0、人物越界 false、Runtime 异常 0；证据 `public/design-demos/shots/`。截图脚本使用已有 CDP 渲染方法，仅导航、截图和读取布局，没有调用真实业务接口。
+- 发现并修复人物图被 Grid 固有尺寸撑大，以及手机主操作在首屏外的问题；重跑截图确认。首次渲染脚本清理临时浏览器目录遇到 ENOTEMPTY，改为等待进程退出后清理；复跑退出 0。
+- 未验证项：OpenCLI bridge 未连接，browser open 返回 BROWSER_CONNECT，未做点击/键盘/上传的自动浏览器验收；Huashu lint 因缺 Python Playwright 跳过；LSP 所需默认服务不可用。没有安装工具、添加依赖或把渲染结果当业务端到端成功。
+- 本轮交付为用户要求的设计选择，不是正式页面重构完成；选定后继续实施和验收。
