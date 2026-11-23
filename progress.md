@@ -18,11 +18,12 @@
 ### 验证（真实执行）
 - `node --test` → 39/39 通过（含扣费、失败退额、并发 409、pending 轮询、跨站拒绝、目录穿越拒绝）。
 - 本机 the image service 真实生成（gpt-image-2 / medium / 1024x1536）：
-  - tops（红花衬衫）→ 整件替换，无白色残影，证据 `docs/evidence/ui-result-390.png`、`ui-result-1440.png`；
-  - bottoms（黑牛仔裤）→ 下装完整替换，证据 `docs/evidence/tryon-bottoms.jpg`；
-  - dresses（黑缎面吊带裙）→ 上下装同时替换、保留鞋，证据 `docs/evidence/tryon-dresses.jpg`；
-  - 提示词对照实验 `docs/evidence/prompt-lab-v0/v1/v2.jpg`。
-- 页面真实交互（Chromium headless + CDP 驱动，容器内）：390/768/1440 三档均无横向溢出；上传人物照 → 提交 → 排队 → 生成 → 结果图加载 → 悬停/点击热区叠加服装图 → 下载按钮 → "我的"订单记录，均实测通过，截图见 `docs/evidence/ui-*.png`。
+  - tops（红花衬衫）→ 整件替换，无白色残影；
+  - bottoms（黑牛仔裤）→ 下装完整替换；
+  - dresses（黑缎面吊带裙）→ 上下装同时替换、保留鞋；
+  - 提示词对照实验做了旧提示词 / 结构化 / 结构化 + 禁合成感三版。
+  - 上述结果图与对照图都含模特照片，**已从仓库删除**，只保留文字结论。
+- 页面真实交互（Chromium headless + CDP 驱动，容器内）：390/768/1440 三档均无横向溢出；上传人物照 → 提交 → 排队 → 生成 → 结果图加载 → 悬停/点击热区叠加服装图 → 下载按钮 → "我的"订单记录，均实测通过；不含人像的界面截图见 `docs/evidence/ui-*.png`。
 - 真实 HTTP：/api/config 返回 4 个模型与定价；/api/products 返回 6 件商品；下单扣费 ¥6.90 → 余额 ¥0；失败场景由自动化测试覆盖（退费）。
 
 ### 独立评审与修复（2025-11-22）
@@ -62,7 +63,7 @@
 ### 验证（真实执行）
 - `node --test` → **75/75 通过**（商品链接解析 24 项、身份约束 1 项、API 集成 4 项）。
 - 真实解析（最终版本）：淘宝桌面长链与手机分享文案均 **13 张**（main 3 + sku 10）、京东 17 张、拼多多 `?ps=` 分享 **29 张**（main 1 + detail 28）、抖音分享文案 **2 张主图**；取图均为 1440×1920 / 1500×2000 / 1440×1440，逐张查看确认是商品图。
-- 真实出图：手机分享短链 → `/api/sources` → `/api/orders(sourceId)` → 轮询 → `?k=<token>` 取图，**43.7 秒 success**，结果 1024×1536 / 1761061B，证据 `docs/evidence/import-tryon-result.png`。
+- 真实出图：手机分享短链 → `/api/sources` → `/api/orders(sourceId)` → 轮询 → `?k=<token>` 取图，**43.7 秒 success**，结果 1024×1536 / 1761061B（结果图含模特照片，已从仓库删除）。
 - 浏览器 UI（OpenCLI，1266×751 前台窗口）：`#/import` 粘贴整段文案 → 读出商品图 → 点「用这件试穿」进入 `#/source-tryon`，商品标题/来源/外部商品图徽标均正确；抖音分享短链同样在页面上读出 2 张主图（截图 `docs/evidence/ui-import-douyin.png`）。
 
 ### 未验证 / 已知缺口
@@ -155,7 +156,7 @@
 
 **验证（真实执行）**
 - `node --test` **96/96 通过**（新增多件下单、pieces 校验、settings 读写、演示模式计费为 0、设置模型白名单、cookie 不外泄、演示模式关直连、导入图进多件、非法单品四连、两配饰 + 5 件上限、下单中途失败回滚等用例）。
-- 真实多件出图（`DEMO_MODE=1`，`artifacts/probe/probe-studio.mjs`）：上衣 + 下装 → 201、`priceCents:0`、35s success、结果 1846617B，人物身份保留且上下装同时替换（证据 `docs/evidence/v3-multi-piece-result.png`）。
+- 真实多件出图（`DEMO_MODE=1`，`artifacts/probe/probe-studio.mjs`）：上衣 + 下装 → 201、`priceCents:0`、35s success、结果 1846617B，人物身份保留且上下装同时替换（结果图含模特照片，已从仓库删除）。
 - 全路由截图（`artifacts/shoot-all.mjs`，6 路由 × 1440/768/390 = 18 张）全部成功，`scrollWidth === clientWidth`、无越界元素；入库证据 `docs/evidence/v3-{shop,studio,wardrobe,settings,import}-1440.png` 与 `v3-{studio,settings}-390.png`。
 - 设置页：`GET /api/settings` 返回 model/4 个模型/取图来源布尔/网关连通；`PATCH` 后回读一致；写不存在的模型返回 400 `MODEL_UNAVAILABLE` 且不改动设置。
 - 下拉一致性实测：trigger 与 item 同为 40px 高、`padding 0 14px`、14px 字号，文字左边缘坐标一致。

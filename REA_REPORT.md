@@ -67,4 +67,4 @@ OpenCLI拒绝chrome-extension://导航（HTTP/HTTPS限制），无原插件运�
 
 主代理报告 GPT Image 2 苹果生成成功及双参考上装成功，红花衬衫替换后牛仔裤、白鞋、人物、背景在视觉语义上保留；MiniMax 苹果 502 失败。两混元、其他服装分类与样本未验证。文档代理未重发生成，不能声称四模型全可用。gateway.json 读取优先级已由主代理结合源码、测试与真实 /api/config 返回四项模型确认。
 
-主代理随后通过正式本地 API 用同一合成人物与三件独立服装完成 tops/bottoms/dresses 真实生成：37.5/19.9/31.9 秒，均成功，逐张查看确认区域替换与人物保留；证据见 progress.md 与 docs/evidence/tryon-comparison.png。该结果只代表 GPT Image 2 的本次样例，不证明其他模型或像素级保真。最终 node --test 22/22 通过；浏览器内上传受 OpenCLI Not allowed 限制，完整界面生成链仍未自动验收。本报告保留关键证据，不以被忽略的 artifacts 研究文件作为唯一来源。
+主代理随后通过正式本地 API 用同一合成人物与三件独立服装完成 tops/bottoms/dresses 真实生成：37.5/19.9/31.9 秒，均成功，逐张查看确认区域替换与人物保留；证据结论记在 progress.md，对比图因含模特照片已从仓库删除。该结果只代表 GPT Image 2 的本次样例，不证明其他模型或像素级保真。最终 node --test 22/22 通过；浏览器内上传受 OpenCLI Not allowed 限制，完整界面生成链仍未自动验收。本报告保留关键证据，不以被忽略的 artifacts 研究文件作为唯一来源。
