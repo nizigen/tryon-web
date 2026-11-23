@@ -13,6 +13,13 @@
   flex-wrap: wrap;
 }
 
+.wardrobe-head__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
 /* ---------------- 衣橱：网格与卡片 ---------------- */
 
 .wardrobe-search {
@@ -198,6 +205,17 @@
   font-size: 18px;
 }
 
+.modal--wide {
+  max-width: 560px;
+}
+
+/* 解析出的商品图可能有几十张：网格自身滚动，名称/类目/加入按钮始终可达。 */
+.modal--wide .import__grid {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
 .modal__preview {
   width: 100%;
   max-height: 320px;
@@ -217,6 +235,11 @@
   justify-content: flex-end;
   gap: 10px;
   margin-top: 4px;
+  /* 内容长时（几十张商品图）按钮仍固定在弹窗底部可见，不用滚到底找「加入衣橱」。 */
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  padding: 10px 0 2px;
 }
 
 /* ---------------- 今日穿搭 ---------------- */

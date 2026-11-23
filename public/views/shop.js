@@ -44,11 +44,11 @@ export function renderShop(root, ctx) {
     filters.append(chip);
   }
 
-  const importCta = h('button', { type: 'button', class: 'import-cta', onclick: () => ctx.onOpenImport() }, [
+  const importCta = h('button', { type: 'button', class: 'import-cta', onclick: () => ctx.onNavigate('wardrobe') }, [
     h('span', { class: 'import-cta__icon', 'aria-hidden': 'true', text: '🔗' }),
     h('span', { class: 'import-cta__text' }, [
       h('strong', { text: '导入商品链接' }),
-      h('span', { text: '粘贴淘宝 / 京东 / 拼多多 / 抖音商品链接，抓取图片来试穿' }),
+      h('span', { text: '在「我的衣橱」里粘贴淘宝 / 京东 / 拼多多 / 抖音商品链接，抓图入橱' }),
     ]),
     h('span', { class: 'import-cta__go', 'aria-hidden': 'true', text: '→' }),
   ]);

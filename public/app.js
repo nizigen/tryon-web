@@ -1,6 +1,5 @@
 import { api, deviceId, getSessionId, setSessionId } from './lib/api.js';
 import { clear, closeAllMenus, h, money, toast } from './lib/dom.js';
-import { renderImport } from './views/import.js';
 import { renderMe } from './views/me.js';
 import { renderShop } from './views/shop.js';
 import { renderSettings } from './views/settings.js';
@@ -19,14 +18,11 @@ const ctx = {
   products: [],
   demoMode: false,
   model: null,
-  importedSource: null,
-  importedItems: [],
   pendingPiece: null,
   balanceCents: 0,
   applyDemoMode,
   onNavigate,
   onOpenProduct,
-  onOpenImport,
   onBalanceChanged,
   async refreshBalance() {
     if (!getSessionId()) return;
@@ -49,10 +45,6 @@ function onOpenProduct(productId) {
   location.hash = `#/tryon/${productId}`;
 }
 
-function onOpenImport() {
-  location.hash = '#/import';
-}
-
 function onNavigate(route) {
   location.hash = `#/${route}`;
 }
@@ -61,12 +53,12 @@ function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, '');
   const [route, id] = hash.split('/');
   if (route === 'tryon' && id) return { route: 'tryon', id };
-  if (['shop', 'studio', 'wardrobe', 'settings', 'import', 'me'].includes(route)) return { route };
+  if (['shop', 'studio', 'wardrobe', 'settings', 'me'].includes(route)) return { route };
   return { route: 'studio' };
 }
 
 function setActiveNav(route) {
-  const active = route === 'tryon' ? 'studio' : route === 'import' ? 'wardrobe' : route;
+  const active = route === 'tryon' ? 'studio' : route;
   for (const item of document.querySelectorAll('.nav__item')) {
     const on = item.dataset.route === active;
     item.classList.toggle('is-active', on);
@@ -88,7 +80,6 @@ function render() {
     renderStudio(root, ctx, preset);
   } else if (route === 'wardrobe') renderWardrobe(root, ctx);
   else if (route === 'settings') renderSettings(root, ctx);
-  else if (route === 'import') renderImport(root, ctx);
   else if (route === 'me') renderMe(root, ctx);
   else renderShop(root, ctx);
   // 换页必须回到顶部：否则从长页面（如工作台）跳到短页面时，

@@ -417,3 +417,19 @@ ode --test\ 137/137 通过。
 **未验**
 - 编辑弹窗改「大类」后二级子类的联动表现只按代码路径核对（未逐个类目点）；真实手机端未复测（仅 390 视口模拟）。
 - 抖音博主橱窗解析确认无公开接口，本轮未做（能力边界，非缺陷）。
+
+## 2025-11-23 · 链接导入搬进「我的衣橱」弹窗（m12752）
+**变更**
+- `public/views/wardrobe.js`：头部 `.wardrobe-head__actions` 放「链接导入」+「上传图片」；新增 `openImportModal()`（粘贴 → `POST /api/sources` 解析 → 选缩略图 → 填名称/两级类目 → `POST /api/wardrobe {sourceId, sourceIndex, name, category, subtype}` → toast「已加入衣橱」+ 刷新）。空态「从商品链接导入」指向同一弹窗。
+- 删除 `public/views/import.js` 与 `#/import` 路由；`public/app.js` 移除 `renderImport` 导入、`onOpenImport`、`importedSource/importedItems`、路由白名单与 `setActiveNav` 里的 `import`。
+- `public/views/shop.js`：CTA 改为跳「我的衣橱」，文案改「粘贴淘宝 / 京东 / 拼多多 / 抖音商品链接，抓图入橱」。
+- `public/style-wardrobe.css`：`.wardrobe-head__actions`；`.modal--wide` 560px；`.modal--wide .import__grid` 内滚 260px（初版 320px 会让弹窗整体外滚、按钮被切）；`.modal__actions` sticky 到底部，长内容时按钮常驻。
+
+**验证**
+- `node --check` app.js / wardrobe.js / shop.js 全 exit 0；`node --test` **139/139 pass**。
+- `artifacts/probe-import-modal.mjs`（CDP 9468）：头部按钮 `["链接导入","上传图片"]` 无溢出；解析拼多多 `goods.html?ps=…` → 29 张 / 705ms、名称预填；选第 2 张 → 加入后弹窗关闭、卡片 16→17、探针自行 DELETE 回收 `cleaned:1`；390 头部无溢出。
+- `artifacts/probe-import-shot.mjs`（CDP 9469）：1440 modal 560×800 `scrollable:false`；390 modal 350×760，按钮 sticky 后始终可见。截图 `artifacts/shots/ui-import-modal-clip-1440.png`、`ui-import-modal-clip-390.png`、`ui-import-modal-empty-1440.png`、`ui-import-modal-parsed-1440.png`、`ui-wardrobe-head-390.png`。
+
+**未验**
+- 只实测了拼多多一条真实链接的解析入橱；淘宝/京东/抖音走同一 `/api/sources` 路径但本轮未逐平台点。
+- 真实手机未复测（仅 390 视口模拟）。
