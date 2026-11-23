@@ -745,43 +745,55 @@ export function renderStudio(root, ctx, preset) {
       h('p', { class: 'page-sub', text: '默认用内置模特，添加单品组合成一套，再一键试穿；也可以换成你自己的照片。' }),
     ]),
     h('div', { class: 'studio' }, [
-      h('div', { class: 'studio__top' }, [
+      h('div', { class: 'studio__controls' }, [
         h('section', { class: 'card' }, [
-          h('h2', { class: 'section__title', text: '人物照片' }),
+          h('div', { class: 'card__head' }, [
+            h('div', { class: 'card__heading' }, [
+              h('h2', { class: 'section__title', text: '人物照片' }),
+            ]),
+          ]),
           dropzone,
         ]),
-      ]),
-      h('section', { class: 'card' }, [
-        h('div', { class: 'piece-head' }, [
-          h('h2', { class: 'section__title', text: '单品搭配' }),
-          h('span', { class: 'section__hint', text: '每个单品：大类 · 子类 · 单品图' }),
-          h('span', { class: 'push-end' }, [addBtn]),
+        h('section', { class: 'card' }, [
+          h('div', { class: 'card__head' }, [
+            h('div', { class: 'card__heading' }, [
+              h('h2', { class: 'section__title', text: '单品搭配' }),
+              h('p', { class: 'section__hint', text: '每个单品：大类 · 子类 · 单品图' }),
+            ]),
+            h('span', { class: 'push-end' }, [addBtn]),
+          ]),
+          hintEl,
+          entriesEl,
         ]),
-        hintEl,
-        h('div', { class: 'spacer-sm' }),
-        entriesEl,
-      ]),
-      h('section', { class: 'card studio__options' }, [
-        h('div', { class: 'field' }, [
-          h('span', { class: 'field__label', text: '版型' }),
-          fitButtons,
+        h('section', { class: 'card' }, [
+          h('div', { class: 'studio__options' }, [
+            h('div', { class: 'field' }, [
+              h('span', { class: 'field__label', text: '版型' }),
+              fitButtons,
+            ]),
+            h('div', { class: 'field' }, [
+              h('label', { class: 'field__label', for: 'studio-prompt', text: '补充要求' }),
+              promptInput,
+              promptCounter,
+            ]),
+          ]),
         ]),
-        h('div', { class: 'field' }, [
-          h('label', { class: 'field__label', for: 'studio-prompt', text: '补充要求' }),
-          promptInput,
-          promptCounter,
-        ]),
-      ]),
-      h('section', { class: 'card' }, [
-        h('div', { class: 'studio__submit' }, [
-          countEl,
-          demoNote,
-          h('span', { class: 'push-end' }, [submitStatus, submitBtn]),
+        h('section', { class: 'card' }, [
+          h('div', { class: 'studio__submit' }, [
+            h('div', { class: 'studio__submit-info' }, [countEl, demoNote]),
+            h('span', { class: 'push-end' }, [submitStatus, submitBtn]),
+          ]),
         ]),
       ]),
-      h('section', { class: 'card' }, [
-        h('h2', { class: 'section__title', text: '试穿结果' }),
-        resultBody,
+      h('div', { class: 'studio__preview' }, [
+        h('section', { class: 'card' }, [
+          h('div', { class: 'card__head' }, [
+            h('div', { class: 'card__heading' }, [
+              h('h2', { class: 'section__title', text: '试穿结果' }),
+            ]),
+          ]),
+          resultBody,
+        ]),
       ]),
     ]),
   );

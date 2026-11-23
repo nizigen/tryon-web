@@ -790,20 +790,80 @@ textarea::placeholder {
   gap: 18px;
 }
 
-.studio__top {
+/* 左控制栏 + 右结果区；大屏下结果区吸顶，生成时始终能看见 */
+.studio__controls,
+.studio__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.studio__preview {
+  align-self: start;
+}
+
+@media (min-width: 1080px) {
+  .studio {
+    grid-template-columns: minmax(400px, 460px) minmax(0, 1fr);
+    align-items: start;
+    gap: 20px;
+  }
+
+  .studio__preview {
+    position: sticky;
+    top: 84px;
+  }
+}
+
+.studio__preview > .card {
+  display: flex;
+  flex-direction: column;
+  min-height: 440px;
+}
+
+.studio__preview .result {
+  flex: 1 1 auto;
+}
+
+.studio__preview .empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* 卡片标题行：标题与说明上下排，右侧放操作按钮，避免标题压到提示文字上 */
+.card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.card__heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 18px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.card__head .section__title {
+  margin: 0;
+}
+
+.card__head .section__hint {
+  margin: 0;
 }
 
 .dropzone {
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--radius-panel);
   background: var(--panel-2);
-  padding: 20px 16px;
+  padding: 16px 14px;
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: 8px;
   text-align: center;
 }
 
@@ -813,7 +873,7 @@ textarea::placeholder {
 }
 
 .dropzone__preview {
-  max-height: 240px;
+  max-height: 200px;
   width: auto;
   border-radius: 12px;
 }
@@ -1012,6 +1072,12 @@ textarea::placeholder {
   flex-wrap: wrap;
 }
 
+.studio__submit-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
 .studio__count {
   font-size: 13px;
   color: var(--muted);
@@ -1135,6 +1201,13 @@ textarea::placeholder {
 .settings {
   display: grid;
   gap: 18px;
+}
+
+@media (min-width: 900px) {
+  .settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
 }
 
 .kv {

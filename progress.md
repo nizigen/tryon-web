@@ -334,3 +334,26 @@
 **错误与修正**
 - 第一版探针忘了给「今日穿搭需求」输入框填值，`帮我选` 直接返回 0 个搭配，误以为衣橱是空的；补上输入值后 suggestion 正常给出 2 个格子。
 - 下单探针第一次漏传 `person`，返回 `400 INVALID_IMAGE field=person`；补 `public/model/model-front.png` 的 dataURL 后 201。
+
+## 2025-11-23 · 前端布局重做：工作台两栏 + 设置多列
+
+**输入与决策**
+- 用户反馈「现在布局和交互太难看」，要求按 vibe-coding 前端轨道优化。
+- 沿用已批准的 flyne 深色方向（frontend-track §3「对已批准方向的迭代」不重开选型门），只调结构与间距，不换视觉语言。
+
+**变更**
+- `public/views/studio.js`：`root.append` 由单列堆叠改为 `studio` 两栏——左 `studio__controls`（人物照片 / 单品搭配 / 版型与补充要求 / 提交）+ 右 `studio__preview`（试穿结果）。标题统一用 `.card__head > .card__heading`（标题在上、`.section__hint` 在下）+ 右侧 `.push-end` 放「＋ 添加单品」；提交卡内层拆 `.studio__submit-info`（已选件数 + 演示提示）与 `.push-end`（状态 + 按钮）。
+- `public/style.css`：`.studio` ≥1080px 两列 `minmax(400px,460px) minmax(0,1fr)`，`.studio__preview position:sticky; top:84px`；新增 `.card__head/.card__heading/.studio__submit-info`；`.studio__preview > .card` 最小高 440px、空态垂直居中；`.settings` ≥900px 两列网格；收紧 `.dropzone` 内边距（20/16→16/14）与预览高度（240→200）。
+- `FRONTEND_GUIDELINES.md`：布局段补「工作台两栏 + 结果区吸顶」「设置两列」「`.card__head` 标题上下排」三条规则。
+
+**验证**
+- `node --test` 137/137 通过（4070ms）。
+- `artifacts/shot-cdp-all.mjs`：6 路由 × 1440/768/390 = 18 组，`scrollWidth === clientWidth`、越界元素全空，无横向溢出。
+- 真实出图（`artifacts/probe-default-person-tryon.mjs`，内置模特 + 预填 shirt-floral）：下单 201、`slots ["top"]`、`priceCents 0`、约 24s success，结果图 744×2114 在右栏正常显示（截图 `artifacts/shots/cdp-studio-result-1440.png`）。
+
+**错误与修正**
+- 首次 `edit` 报「file changed since it was read」——因为我先前只用 `node -e` 读过 studio.js，不算 read 工具观测；改用 read/edit 后正常。
+
+**未验证**
+- 多件（外套/下装/鞋）在新两栏布局下的结果展示未单独截图；结构上与单件一致。
+
