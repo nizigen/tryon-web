@@ -57,6 +57,9 @@ export function renderStudio(root, ctx, preset) {
   const hintEl = h('p', { class: 'studio__hint', hidden: true });
   const countEl = h('span', { class: 'studio__count' });
   const submitBtn = h('button', { type: 'button', class: 'btn btn--primary btn--lg', text: '开始试穿' });
+  const submitSpinner = h('span', { class: 'spinner', hidden: true });
+  const submitStatusText = h('span');
+  const submitStatus = h('span', { class: 'studio__busy', hidden: true }, [submitSpinner, submitStatusText]);
   const demoNote = h('span', { class: 'field__hint', text: '演示模式 · 本次试穿不扣费' });
   const resultBody = h('div', { class: 'result' });
 
@@ -493,6 +496,10 @@ export function renderStudio(root, ctx, preset) {
     }
     submitBtn.disabled = busy || !state.person || pieces.length === 0 || pieces.length > MAX_PIECES || tooHeavy;
     submitBtn.textContent = busy ? '生成中…' : '开始试穿';
+    // 按钮旁同步显示转圈与阶段：只在结果区转圈时，首屏看着像「完全不转」。
+    submitStatus.hidden = !busy;
+    submitSpinner.hidden = !busy;
+    submitStatusText.textContent = busy ? (STAGE_TEXT[state.job?.stage] ?? STAGE_TEXT.generating) : '';
     demoNote.hidden = !ctx.demoMode;
   }
 
@@ -616,6 +623,8 @@ export function renderStudio(root, ctx, preset) {
           if (!ctx.demoMode) await ctx.refreshBalance();
           paintResult();
           updateSubmit();
+        } else {
+          updateSubmit();
         }
       } catch {
         stopPolling();
@@ -661,7 +670,7 @@ export function renderStudio(root, ctx, preset) {
       paintResult();
       updateSubmit();
       pollJob(payload.jobId);
-      resultBody.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      resultBody.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (error) {
       toast(error.message);
       updateSubmit();
@@ -767,7 +776,7 @@ export function renderStudio(root, ctx, preset) {
         h('div', { class: 'studio__submit' }, [
           countEl,
           demoNote,
-          h('span', { class: 'push-end' }, [submitBtn]),
+          h('span', { class: 'push-end' }, [submitStatus, submitBtn]),
         ]),
       ]),
       h('section', { class: 'card' }, [

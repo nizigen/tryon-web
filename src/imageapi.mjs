@@ -2,7 +2,7 @@ import { HttpError, upstreamError } from './errors.mjs';
 import { decodeBase64, decodeImage, MAX_BODY_BYTES, MAX_OUTPUT_BYTES, sniff } from './validate.mjs';
 
 export const DEFAULT_TIMEOUT_MS = 120_000;
-export const DEFAULT_MODEL = 'codex/gpt-image-2';
+export const DEFAULT_MODEL = 'codex/gpt-image-2.5';
 const DEFAULT_BASE_URL = 'http://127.0.0.1:3425/v1';
 
 /**

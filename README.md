@@ -33,7 +33,7 @@ run-demo.cmd
 | --- | --- |
 | `IMAGE_API_BASE_URL` | 图片服务的根地址（含版本前缀），默认 `http://127.0.0.1:3425/v1` |
 | `IMAGE_API_KEY` | 图片服务的密钥，以 `Authorization: Bearer` 发送；留空则不发送该头 |
-| `IMAGE_MODEL` | 默认模型，默认 `codex/gpt-image-2`（作者本机的模型名，换成你所用服务里的真实模型名）；会作为兜底项补进模型列表 |
+| `IMAGE_MODEL` | 默认模型，默认 `codex/gpt-image-2.5`（作者本机的模型名，换成你所用服务里的真实模型名）；会作为兜底项补进模型列表 |
 | `IMAGE_MODELS` | 逗号分隔的模型白名单；填了就不再请求 `/models`，直接用它 |
 | `IMAGE_TIMEOUT_MS` | 单次生成的等待上限（默认 120000） |
 | `CHAT_API_BASE_URL` / `CHAT_API_KEY` | 视觉描述与 AI 选搭用的对话服务；不填则复用图片服务的地址与密钥 |
@@ -80,7 +80,7 @@ node --test
 - **扫码登录未在真实手机扫码下验证**：已验证「未扫码时不误判为成功」「cookie 只改当前平台键」「并发 start 返回 409」；真实扫码走通并写出 cookie 的那一步还没跑过。
 - **AI 选搭依赖对话模型**：模型不可用或返回非法 JSON 时按规则回退，此时不会理解自然语言需求，只按品类补齐。
 - 多件穿搭靠一次多参考图生成，件数越多越容易串味；单件换装更稳。
-- **模型可达性由服务端决定，不是本项目的状态**：`/v1/models` 列出模型不代表它能出图。实测本机网关同一时刻 `workbuddy/hunyuan-image-alpha` 的生成与编辑都返回 200，`codex/gpt-image-2` 因出口网络不通返回 502，`minimax-code/MiniMax-Image` 返回「no images」，`workbuddy-ai/hy-image-3.5` 额度用尽返回 429。默认值给的是 `codex/gpt-image-2`，换成你自己环境里真能出图的模型用 `IMAGE_MODEL` 或 `IMAGE_MODELS` 指定；界面上的失败提示来自上游，不会静默换模型。
+- **模型可达性由服务端决定，不是本项目的状态**：`/v1/models` 列出模型不代表它能出图。实测本机网关同一时刻 `workbuddy/hunyuan-image-alpha` 的生成与编辑都返回 200，`codex/gpt-image-2` 因出口网络不通返回 502，`minimax-code/MiniMax-Image` 返回「no images」，`workbuddy-ai/hy-image-3.5` 额度用尽返回 429。默认值给的是 `codex/gpt-image-2.5`，换成你自己环境里真能出图的模型用 `IMAGE_MODEL` 或 `IMAGE_MODELS` 指定；界面上的失败提示来自上游，不会静默换模型。
 - **图片要以内联方式返回**：请求里带 `response_format=b64_json`。服务仍只回 `url` 时，只有与接口同源的地址才会被取回；指向第三方的链接一律拒绝（不把服务端变成任意地址的取信通道）。
 - 提示词为本项目自建（原扩展服务端模板不可得），不保证像素级保真。
 - 结果图默认 24 小时后清理；人像照片不落盘。

@@ -303,3 +303,34 @@
 **错误与修正**
 - 第一次跑真实探针报 `502 UPSTREAM_ERROR`，一度怀疑 multipart 拼错；用 `artifacts/probe-edits-debug.mjs` 打出上游原文才发现是 `chatgpt.com` 连接超时，与代码无关。教训：上游 502 先看它自己的 error.message，不要先怀疑本地拼装。
 - 用 `node -e` 内联脚本改中文文档时，双引号与反斜杠被 PowerShell 吞掉导致语法错误；改为把脚本写成 `artifacts/*.mjs` 文件再执行，稳定可靠。
+
+## 2025-11-23 · v5 补丁：加载态修复 + 默认模型升到 2.5
+
+**输入与决策**
+- 用户：「你这开始生成怎么完全不转呢？还有先把本地的模型换成 image-2.5」。
+- 决策：不猜「转圈没转」，先用 CDP 采样 `getAnimations()` 与元素几何区分「动画没跑 / 动画在视口外 / 根本没有 spinner」三种情况，再对症修。
+
+**变更**
+- `public/views/wardrobe.js`：新增 `setStatus(text, spinning)`（`orderSpinner` + `orderStatusText` 同进同出），替换 10 处零散的 `orderStatus.textContent = ...`；`paintResult()` 补 `pending` 等待卡片（`.stage` + `.spinner` + 阶段文案）；提交后 `orderStatus.scrollIntoView({block:'center'})`；轮询里阶段变化同步 `paintResult()`。
+- `public/views/studio.js`：提交按钮旁新增 `.studio__busy`（`submitSpinner` + `submitStatusText`），`updateSubmit()` 里与 `busy` 一起显隐；轮询的 pending 分支补 `updateSubmit()` 让阶段文案跟着走；结果区滚动改 `block:'center'`。
+- `public/style.css`：新增 `.studio__busy`（inline-flex、gap 8px、13px、muted）。
+- `public/style-wardrobe.css`：`.stylist__status` 改 flex + gap，让转圈与文案同一行。
+- `src/imageapi.mjs`：`DEFAULT_MODEL` → `codex/gpt-image-2.5`。
+- `src/pricing.mjs`：`MODEL_LABELS` 与 `TIERS` 增 `codex/gpt-image-2.5`（沿用 690/1390 与 medium/high），保留 `codex/gpt-image-2` 条目；`priceCatalog` 的 `preferred` 优先 2.5、再退 2、再取首个。
+- 测试：`test/api.test.mjs`、`test/wardrobe-api.test.mjs`、`test/pricing.test.mjs` 里的模型名与 defaultModel 断言同步为 2.5。
+- 文档：`.env.example`、`README.md`、`BACKEND_STRUCTURE.md`、`TECH_STACK.md` 的默认模型与价格表同步；README 里「`codex/gpt-image-2` 返回 502」是实测记录，保留原样。
+
+**验证**
+- 全仓 `node --test` **137/137 通过**（约 4.4s）。
+- 真实网关（`DEMO_MODE=1`，服务 PID 163300）：`/api/config` → `defaultModel codex/gpt-image-2.5`、slots 7；`/api/settings" → model 2.5、gateway true；下单 201 → 轮询 3–33s `running generating` → **33s success** → 2138410 字节 PNG（`artifacts/test/v5-model25-order.png`，订单 `model: codex/gpt-image-2.5`）。
+- 衣橱页 CDP 实测（`artifacts/probe-busy-visible.mjs`）：`.spinner` `hidden:false`、`getAnimations().length===1`、`spinnerRect.y≈667`（1440×900 视口内）、`statusText` 从「排队中，马上轮到你」→「正在生成，请稍候」、`btnText` 「生成中…」、结果区 `.stage` 存在、页面自动滚到 `scrollY 372`。
+- 工作台 CDP 实测（`artifacts/probe-studio-busy.mjs`）：`.studio__busy` `hidden:false`、spinner `getAnimations().length===1`、`spinnerRect.y≈566`、`btnText`「生成中…」、`stageText`「排队中，马上轮到你」、`stageVisible:true`。
+- 证据图：`artifacts/shots/busy-studio-1440.png`、`artifacts/shots/busy-wardrobe-1440.png`。
+
+**未验证**
+- 只在 1440×900 视口实测了加载态位置；390 窄屏未单独量（v4 已验窄屏无横向溢出，本轮未改布局结构）。
+- 2.5 的真实出图只跑了一次单件；多件满配未回归。
+
+**错误与修正**
+- 第一版探针忘了给「今日穿搭需求」输入框填值，`帮我选` 直接返回 0 个搭配，误以为衣橱是空的；补上输入值后 suggestion 正常给出 2 个格子。
+- 下单探针第一次漏传 `person`，返回 `400 INVALID_IMAGE field=person`；补 `public/model/model-front.png` 的 dataURL 后 201。

@@ -14,7 +14,7 @@ const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwA
 const PERSON = `data:image/png;base64,${PNG}`;
 /** 商品图下载有占位图下限（4KiB），测试图要撑过去。 */
 const PNG_BYTES = Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.alloc(8192)]);
-const MODELS = ['codex/gpt-image-2', 'minimax-code/MiniMax-Image'];
+const MODELS = ['codex/gpt-image-2.5', 'minimax-code/MiniMax-Image'];
 
 function jsonResponse(payload) {
   return new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } });
@@ -140,7 +140,7 @@ test('GET /api/config 返回模型目录、定价、分类与限制', async () =
     const response = await call('/api/config');
     assert.equal(response.status, 200);
     assert.equal(response.payload.models.length, 2);
-    assert.equal(response.payload.defaultModel, 'codex/gpt-image-2');
+    assert.equal(response.payload.defaultModel, 'codex/gpt-image-2.5');
     assert.equal(response.payload.defaultTier, 'standard');
     assert.equal(response.payload.tryOnFromCents, 190);
     assert.equal(response.payload.categories.length, 3);
@@ -173,7 +173,7 @@ test('下单缺少人物照返回 400', async () => {
     const session = await createSession(call);
     const response = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard' }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard' }),
     });
     assert.equal(response.status, 400);
     assert.equal(response.payload.error.field, 'person');
@@ -186,7 +186,7 @@ test('余额不足时拒绝下单并给出差额', async () => {
     await store.addBalance(session.sessionId, -session.balanceCents);
     const response = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     assert.equal(response.status, 402);
     assert.equal(response.payload.error.code, 'INSUFFICIENT_BALANCE');
@@ -226,7 +226,7 @@ test('下单后任务成功、扣费并可取回结果', async () => {
     const before = session.balanceCents;
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     assert.equal(created.status, 201);
     assert.equal(created.payload.priceCents, 690);
@@ -248,7 +248,7 @@ test('生成失败时订单失败且额度退回', async () => {
     const before = session.balanceCents;
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     assert.equal(created.status, 201);
     const job = await waitForJob(call, created.payload.jobId);
@@ -266,7 +266,7 @@ test('有参考图时走 /images/edits，把人物与商品图一起上传', asy
     const session = await createSession(call);
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     const job = await waitForJob(call, created.payload.jobId);
     assert.equal(job.status, 'success');
@@ -278,7 +278,7 @@ test('有参考图时走 /images/edits，把人物与商品图一起上传', asy
 test('同一会话同时只能有一个进行中的试穿任务', async () => {
   await withServer({ slowMs: 400 }, async ({ call }) => {
     const session = await createSession(call);
-    const body = JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON });
+    const body = JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON });
     const first = await call('/api/orders', { method: 'POST', body });
     assert.equal(first.status, 201);
     const second = await call('/api/orders', { method: 'POST', body });
@@ -292,7 +292,7 @@ test('订单只对所属会话可见', async () => {
     const owner = await createSession(call);
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: owner.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: owner.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     const other = await call('/api/session', { method: 'POST', body: JSON.stringify({ deviceId: 'other-device' }) });
     const list = await call('/api/orders', { headers: { 'x-session-id': other.payload.sessionId } });
@@ -319,10 +319,10 @@ test('POST /api/tryon 保持同步兼容并返回图片', async () => {
   await withServer({}, async ({ call }) => {
     const response = await call('/api/tryon', {
       method: 'POST',
-      body: JSON.stringify({ model: 'codex/gpt-image-2', person: PERSON, garment: PERSON, category: 'tops', garmentType: 'tee' }),
+      body: JSON.stringify({ model: 'codex/gpt-image-2.5', person: PERSON, garment: PERSON, category: 'tops', garmentType: 'tee' }),
     });
     assert.equal(response.status, 200);
-    assert.equal(response.payload.engine, 'codex/gpt-image-2');
+    assert.equal(response.payload.engine, 'codex/gpt-image-2.5');
     assert.match(response.payload.image.dataURL, /^data:image\/png;base64,/);
   });
 });
@@ -331,7 +331,7 @@ test('非法图片内容被拒绝', async () => {
   await withServer({}, async ({ call }) => {
     const response = await call('/api/tryon', {
       method: 'POST',
-      body: JSON.stringify({ model: 'codex/gpt-image-2', person: 'data:image/png;base64,bm90YW5pbWFnZQ==', garment: PERSON, category: 'tops' }),
+      body: JSON.stringify({ model: 'codex/gpt-image-2.5', person: 'data:image/png;base64,bm90YW5pbWFnZQ==', garment: PERSON, category: 'tops' }),
     });
     assert.equal(response.status, 400);
     assert.equal(response.payload.error.code, 'INVALID_IMAGE');
@@ -372,7 +372,7 @@ test('订单落盘不含人像 base64', async () => {
     const session = await createSession(call);
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     assert.equal(created.status, 201);
     await waitForJob(call, created.payload.jobId);
@@ -388,7 +388,7 @@ test('目录商品图以已校验的 data URL 下发给上游', async () => {
     const session = await createSession(call);
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     assert.equal(created.status, 201);
     await waitForJob(call, created.payload.jobId);
@@ -404,7 +404,7 @@ test('结果图需要有效票据，缺票据或票据错误都拒绝', async ()
     const session = await createSession(call);
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     await waitForJob(call, created.payload.jobId);
     const order = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
@@ -494,7 +494,7 @@ test('用链接导入的商品图下单，上游收到该图的 data URL', async
         sourceId: created.payload.source.id,
         sourceIndex: 0,
         sourceName: '火星JK制服墨石格裙',
-        model: 'codex/gpt-image-2',
+        model: 'codex/gpt-image-2.5',
         tier: 'standard',
         category: 'tops',
         garmentType: 'shirt',
@@ -520,7 +520,7 @@ test('不支持的链接与未知 sourceId 给出明确错误', async () => {
     const session = await createSession(call);
     const order = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, sourceId: 'missing', model: 'codex/gpt-image-2', tier: 'standard', category: 'tops', garmentType: 'shirt', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, sourceId: 'missing', model: 'codex/gpt-image-2.5', tier: 'standard', category: 'tops', garmentType: 'shirt', person: PERSON }),
     });
     assert.equal(order.status, 404);
     assert.equal(order.payload.error.code, 'SOURCE_EXPIRED');
@@ -535,7 +535,7 @@ test('多件搭配（top+bottom）下单成功且参考图按 top→bottom 排�
       method: 'POST',
       body: JSON.stringify({
         sessionId: session.sessionId,
-        model: 'codex/gpt-image-2',
+        model: 'codex/gpt-image-2.5',
         tier: 'standard',
         person: PERSON,
         pieces: [
@@ -565,7 +565,7 @@ test('连衣裙与上衣/下装互斥返回 400 INVALID_REQUEST', async () => {
       method: 'POST',
       body: JSON.stringify({
         sessionId: session.sessionId,
-        model: 'codex/gpt-image-2',
+        model: 'codex/gpt-image-2.5',
         tier: 'standard',
         person: PERSON,
         pieces: [
@@ -590,7 +590,7 @@ test('单品件数超过 5 件返回 400', async () => {
     }));
     const response = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2', tier: 'standard', person: PERSON, pieces }),
+      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON, pieces }),
     });
     assert.equal(response.status, 400);
     assert.equal(response.payload.error.code, 'INVALID_REQUEST');
@@ -608,7 +608,7 @@ test('配饰最多 2 件', async () => {
     }));
     const response = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2', tier: 'standard', person: PERSON, pieces }),
+      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON, pieces }),
     });
     assert.equal(response.status, 400);
     assert.equal(response.payload.error.field, 'pieces');
@@ -623,7 +623,7 @@ test('演示模式下单不扣费、不校验余额，充值返回 PAYMENT_DISAB
     await store.addBalance(session.sessionId, -session.balanceCents);
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     assert.equal(created.status, 201);
     assert.equal(created.payload.priceCents, 0);
@@ -642,7 +642,7 @@ test('GET/PATCH /api/settings 读写默认模型，下单未传 model 时使用�
   await withServer({}, async ({ call }) => {
     const initial = await call('/api/settings');
     assert.equal(initial.status, 200);
-    assert.equal(initial.payload.model, 'codex/gpt-image-2');
+    assert.equal(initial.payload.model, 'codex/gpt-image-2.5');
     assert.equal(initial.payload.models.length, 2);
     assert.equal(initial.payload.demoMode, false);
     assert.equal(initial.payload.sources.jd, true);
@@ -674,7 +674,7 @@ test('PATCH /api/settings 拒绝网关没有列出的模型', async () => {
     assert.equal(response.payload.error.code, 'MODEL_UNAVAILABLE');
     assert.equal(response.payload.error.field, 'model');
     const after = await call('/api/settings');
-    assert.equal(after.payload.model, 'codex/gpt-image-2', '非法请求不能改动设置');
+    assert.equal(after.payload.model, 'codex/gpt-image-2.5', '非法请求不能改动设置');
   });
 });
 
@@ -692,7 +692,7 @@ test('演示模式下直连生成接口也关闭，避免绕过下单消耗额�
   await withServer({ env: { DEMO_MODE: '1' }, record }, async ({ call }) => {
     const response = await call('/api/tryon', {
       method: 'POST',
-      body: JSON.stringify({ model: 'codex/gpt-image-2', tier: 'standard', category: 'tops', garmentType: 'shirt', person: PERSON, garment: PERSON }),
+      body: JSON.stringify({ model: 'codex/gpt-image-2.5', tier: 'standard', category: 'tops', garmentType: 'shirt', person: PERSON, garment: PERSON }),
     });
     assert.equal(response.status, 403);
     assert.equal(response.payload.error.code, 'RAW_TRYON_DISABLED');
@@ -709,7 +709,7 @@ test('多件搭配可以用链接导入的商品图作为其中一件', async ()
       method: 'POST',
       body: JSON.stringify({
         sessionId: session.sessionId,
-        model: 'codex/gpt-image-2',
+        model: 'codex/gpt-image-2.5',
         tier: 'standard',
         person: PERSON,
         pieces: [
@@ -729,7 +729,7 @@ test('多件搭配可以用链接导入的商品图作为其中一件', async ()
 test('单品的商品不存在、格子未知、来源未知、图片非法都返回 400/404', async () => {
   await withServer({ sourceRunner: SOURCE_RUNNER }, async ({ call }) => {
     const session = await createSession(call);
-    const base = { sessionId: session.sessionId, model: 'codex/gpt-image-2', tier: 'standard', person: PERSON };
+    const base = { sessionId: session.sessionId, model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON };
     const cases = [
       { pieces: [{ slot: 'top', garmentType: '衬衫', source: { kind: 'product', productId: 'no-such-product' } }], status: 404, code: 'PRODUCT_NOT_FOUND' },
       { pieces: [{ slot: 'hat', garmentType: '帽子', source: { kind: 'upload', image: PERSON } }], status: 400, code: 'INVALID_REQUEST' },
@@ -756,7 +756,7 @@ test('两件配饰与正好 5 件单品是允许的上限', async () => {
     ];
     const created = await call('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2', tier: 'standard', person: PERSON, pieces: five }),
+      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON, pieces: five }),
     });
     assert.equal(created.status, 201);
     assert.deepEqual(created.payload.order.slots, ['top', 'outer', 'bottom', 'accessory', 'accessory']);
@@ -781,7 +781,7 @@ test('下单中途失败会撤任务、订单置失败并全额退款', async ()
     try {
       const response = await call('/api/orders', {
         method: 'POST',
-        body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2', tier: 'standard', person: PERSON }),
+        body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
       });
       assert.equal(response.status, 500);
     } finally {

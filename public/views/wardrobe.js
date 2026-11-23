@@ -75,7 +75,9 @@ export function renderWardrobe(root, ctx) {
   const personBtn = h('button', { type: 'button', class: 'btn btn--sm', text: '上传全身照' });
   const personNote = h('p', { class: 'stylist__person-note', hidden: true });
   const orderBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '生成试穿图' });
-  const orderStatus = h('p', { class: 'stylist__status', hidden: true });
+  const orderSpinner = h('span', { class: 'spinner', hidden: true });
+  const orderStatusText = h('span');
+  const orderStatus = h('p', { class: 'stylist__status', hidden: true }, [orderSpinner, orderStatusText]);
   const resultEl = h('div', { class: 'stylist__result-img-wrap' });
 
   // ---- 数据加载 ----
@@ -378,7 +380,7 @@ export function renderWardrobe(root, ctx) {
       state.suggestion = payload.suggestion ?? null;
       state.order = null;
       state.job = null;
-      orderStatus.hidden = true;
+      setStatus('');
       resultEl.replaceChildren();
       paintSuggestion();
     } catch (error) {
@@ -387,6 +389,16 @@ export function renderWardrobe(root, ctx) {
       suggestBtn.disabled = false;
       suggestBtn.textContent = '帮我选';
     }
+  }
+
+  /**
+   * 状态行：文案与转圈一起设置。
+   * 只改文字不改转圈会出现「按钮已禁用、页面一动不动」的观感（用户原话「完全不转」）。
+   */
+  function setStatus(text, spinning = false) {
+    orderStatus.hidden = !text;
+    orderStatusText.textContent = text ?? '';
+    orderSpinner.hidden = !spinning;
   }
 
   function updateOrderButton() {
@@ -420,6 +432,16 @@ export function renderWardrobe(root, ctx) {
   function paintResult() {
     resultEl.replaceChildren();
     const order = state.order;
+    if (order?.status === 'pending') {
+      resultEl.append(
+        h('div', { class: 'stage' }, [
+          h('span', { class: 'spinner' }),
+          h('span', { text: STAGE_TEXT[state.job?.stage] ?? STAGE_TEXT.generating }),
+        ]),
+        h('p', { class: 'result__meta', text: '生成通常需要 20–60 秒，请不要关闭页面。' }),
+      );
+      return;
+    }
     if (!order || order.status !== 'success' || !order.resultFile) return;
     const url = `/api/results/${order.resultFile}?k=${encodeURIComponent(order.resultToken ?? '')}`;
     resultEl.append(
@@ -446,8 +468,7 @@ export function renderWardrobe(root, ctx) {
       if (state.pollTicks > POLL_MAX_TICKS) {
         stopPolling();
         state.stylistBusy = false;
-        orderStatus.hidden = false;
-        orderStatus.textContent = '生成超时，请稍后在「订单与说明」查看结果。';
+        setStatus('生成超时，请稍后在「订单与说明」查看结果。');
         updateOrderButton();
         return;
       }
@@ -460,23 +481,21 @@ export function renderWardrobe(root, ctx) {
           state.order = res.order;
           state.stylistBusy = false;
           if (payload.status === 'failed') {
-            orderStatus.hidden = false;
-            orderStatus.textContent = state.order?.errorMessage || '生成失败，本次不扣费。';
+            setStatus(state.order?.errorMessage || '生成失败，本次不扣费。');
           } else {
-            orderStatus.hidden = true;
+            setStatus('');
             paintResult();
           }
           if (!ctx.demoMode && ctx.refreshBalance) await ctx.refreshBalance();
           updateOrderButton();
         } else {
-          orderStatus.hidden = false;
-          orderStatus.textContent = STAGE_TEXT[payload.stage] || STAGE_TEXT.generating;
+          setStatus(STAGE_TEXT[payload.stage] || STAGE_TEXT.generating, true);
+          paintResult();
         }
       } catch {
         stopPolling();
         state.stylistBusy = false;
-        orderStatus.hidden = false;
-        orderStatus.textContent = '网络中断，未能确认结果，可稍后在「订单与说明」查看。';
+        setStatus('网络中断，未能确认结果，可稍后在「订单与说明」查看。');
         updateOrderButton();
       }
     }, POLL_INTERVAL);
@@ -504,8 +523,7 @@ export function renderWardrobe(root, ctx) {
     }
     state.stylistBusy = true;
     updateOrderButton();
-    orderStatus.hidden = false;
-    orderStatus.textContent = '正在提交订单…';
+    setStatus('正在提交订单…', true);
     try {
       let sessionId = getSessionId();
       if (!sessionId) {
@@ -536,14 +554,15 @@ export function renderWardrobe(root, ctx) {
       state.job = { status: 'queued', stage: 'queued' };
       resultEl.replaceChildren();
       if (typeof payload.balanceCents === 'number' && ctx.onBalanceChanged) ctx.onBalanceChanged(payload.balanceCents);
-      orderStatus.hidden = false;
-      orderStatus.textContent = STAGE_TEXT.queued;
+      setStatus(STAGE_TEXT.queued, true);
       updateOrderButton();
+      paintResult();
+      // 结果区通常在首屏之外：不主动滚过去，用户只会看到按钮变灰而页面「一动不动」。
+      orderStatus.scrollIntoView({ behavior: 'smooth', block: 'center' });
       pollJob(payload.jobId);
     } catch (error) {
       state.stylistBusy = false;
-      orderStatus.hidden = false;
-      orderStatus.textContent = errorText(error);
+      setStatus(errorText(error));
       updateOrderButton();
       toast(errorText(error));
     }

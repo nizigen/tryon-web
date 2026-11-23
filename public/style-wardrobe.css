@@ -298,6 +298,10 @@
   margin: 0;
   font-size: 13px;
   color: var(--muted);
+  /* 转圈与文案同一行：等待时两者必须一起出现，否则看起来像页面卡住。 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .stylist__result-img-wrap {

@@ -8,6 +8,7 @@ import { HttpError } from './errors.mjs';
  */
 
 export const MODEL_LABELS = {
+  'codex/gpt-image-2.5': 'GPT Image 2.5',
   'codex/gpt-image-2': 'GPT Image 2',
   'workbuddy/hunyuan-image-alpha': '混元图像 Alpha',
   'workbuddy-ai/hy-image-3.5': '混元图像 3.5',
@@ -23,6 +24,10 @@ const TIERS = {
   ],
   'workbuddy-ai/hy-image-3.5': [
     { id: 'fast', label: '均衡档', quality: 'medium', size: '1024x1536', priceCents: 390, costCents: 40 },
+  ],
+  'codex/gpt-image-2.5': [
+    { id: 'standard', label: '精档', quality: 'medium', size: '1024x1536', priceCents: 690, costCents: 90 },
+    { id: 'premium', label: '尊档', quality: 'high', size: '1024x1536', priceCents: 1390, costCents: 350 },
   ],
   'codex/gpt-image-2': [
     { id: 'standard', label: '精档', quality: 'medium', size: '1024x1536', priceCents: 690, costCents: 90 },
@@ -66,7 +71,10 @@ export function priceCatalog(modelIds) {
   const cheapest = models
     .flatMap((model) => model.tiers.map((tier) => tier.priceCents))
     .reduce((min, value) => (min === null || value < min ? value : min), null);
-  const preferred = models.find((model) => model.id === 'codex/gpt-image-2') ?? models[0] ?? null;
+  const preferred = models.find((model) => model.id === 'codex/gpt-image-2.5')
+    ?? models.find((model) => model.id === 'codex/gpt-image-2')
+    ?? models[0]
+    ?? null;
   const defaultTier = preferred?.tiers.find((tier) => tier.id === 'standard') ?? preferred?.tiers[0] ?? null;
   const cheapestPrice = cheapest ?? PACKS[0].amountCents;
   return {

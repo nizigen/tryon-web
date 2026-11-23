@@ -13,7 +13,7 @@ import { createWardrobe } from '../src/wardrobe.mjs';
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const PNG_BYTES = Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.alloc(8192)]);
 const IMAGE = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
-const MODELS = ['codex/gpt-image-2', 'minimax-code/MiniMax-Image'];
+const MODELS = ['codex/gpt-image-2.5', 'minimax-code/MiniMax-Image'];
 
 function jsonResponse(payload) {
   return new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } });

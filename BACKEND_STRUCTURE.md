@@ -74,8 +74,8 @@ src/errors.mjs        统一错误类型
 | minimax-code/MiniMax-Image | fast | medium | 190 | 30 | 引流档 |
 | workbuddy/hunyuan-image-alpha | fast | medium | 290 | 40 | 均衡档 |
 | workbuddy-ai/hy-image-3.5 | fast | medium | 390 | 40 | 均衡档 |
-| codex/gpt-image-2 | standard | medium | 690 | 90 | 精档（主力） |
-| codex/gpt-image-2 | premium | high | 1390 | 350 | 尊档 |
+| codex/gpt-image-2.5 | standard | medium | 690 | 90 | 精档（主力） |
+| codex/gpt-image-2.5 | premium | high | 1390 | 350 | 尊档 |
 | 其它模型 | fast | medium | 390 | 100 | 兜底：目录新模型按默认价，管理员可在 pricing.mjs 覆盖 |
 
 档位不属于该模型时直接 400（不静默回落），避免扣费与前端展示价不一致。
@@ -128,7 +128,7 @@ src/errors.mjs        统一错误类型
 | POST | /api/login/:platform/cancel | `{ sessionId }` | 204 |
 
 - **回包形状**：优先读 `data[0].b64_json`；服务只给 `data[0].url` 时，仅当该地址与 `IMAGE_API_BASE_URL` 同源才去取回，第三方地址一律拒绝并报 `UPSTREAM_FORMAT`（避免服务端被当成任意 URL 的取信通道）。
-- **目录不可用**：`GET /models` 连不上或没有该端点时退回 `IMAGE_MODEL`（默认 `codex/gpt-image-2`），不让整个功能失效；真正的可达性由生成请求自己报。
+- **目录不可用**：`GET /models` 连不上或没有该端点时退回 `IMAGE_MODEL`（默认 `codex/gpt-image-2.5`），不让整个功能失效；真正的可达性由生成请求自己报。
 
 ### 多件搭配（pieces）
 

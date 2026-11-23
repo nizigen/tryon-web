@@ -249,3 +249,18 @@
 **教训**：上游 502 先读它自己的 `error.message`。我第一次看到 502 就怀疑 multipart 拼错，实际是上游出口网络不通——本地代理（`127.0.0.1:10808`）通，但网关进程不走代理。
 
 **顺带修的真实缺陷**：`state.json` 里存的模型名在换服务或模型下线后会变成孤儿，原逻辑让每次下单都报 `MODEL_UNAVAILABLE`，而下单页没有切换模型入口，用户无从修复。改为：存的模型不在当前目录时退回默认模型，`GET /api/settings` 报告的也是真正会用的那个。
+
+## 17. 加载态的两个真实缺口与默认模型升级（实测：2025-11-23）
+
+用户反馈「点开始生成，完全不转」。排查后是两处独立缺陷，不是同一个：
+
+| 位置 | 观察 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 工作台 `#/studio` | 转圈其实在转（`getAnimations().length===1`、`transform` 每帧变化），但用户看不到 | 转圈只在结果区的 `.stage` 里，而结果区在首屏下方（实测 `scrollY 542`、`stageRect.y 786`）；`scrollIntoView({block:'nearest'})` 在元素已贴近视口下缘时几乎不滚动 | 提交按钮旁加内联 `.studio__busy`（spinner + 阶段文案），滚动改 `block:'center'` |
+| 衣橱页 `#/wardrobe` | 点「生成试穿图」后页面完全静止，按钮禁用但文字不变 | `public/views/wardrobe.js` **从未使用过 `.spinner`**；`paintResult()` 只有 `success` 才渲染，`pending` 时结果区空白 | 新增 `setStatus(text, spinning)` 统一管理状态行（转圈与文案必须同时改），`paintResult()` 补 `pending` 的等待卡片，提交后 `scrollIntoView({block:'center'})` |
+
+**为什么会「按钮禁用但文字不变」**：状态文案与转圈分散在若干处 `orderStatus.textContent = ...`，任意一处漏改就出现半更新状态。合并进单个 `setStatus` 后不可能只改一半。
+
+**默认模型升级**：`codex/gpt-image-2` → `codex/gpt-image-2.5`。实测（`artifacts/test/image25-edit.png`、`artifacts/test/v5-model25-order.png`）：`/images/generations` 200/15.9s、`/images/edits` 双参考图 multipart 200/29.2s，均返回 `image/png`；真实下单 201 → 33s success → 2138410 字节 PNG，订单 `model` 字段确认 `codex/gpt-image-2.5`。同目录下 `openai/gpt-image-2.5` 404、`workbuddy/gpt-image-2.5` 400（route config 不存在）——**模型名是服务端私有的，必须以本机实测为准**。
+
+**教训**：「转圈不转」要先分清是**动画没跑**还是**动画在视口外/根本不存在**。前者查 CSS 与 `getAnimations()`，后者要量 `getBoundingClientRect().y` 与 `scrollY`。只看截图会误判成前者。

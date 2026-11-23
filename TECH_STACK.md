@@ -17,8 +17,8 @@
 | 衣橱存储 | `data/wardrobe.json` + `data/wardrobe/<uuid>.<ext>` | 原子写、串行队列；检索用内置 BM25（中文按字 + 二元组），不引入向量库 |
 
 ## 模型目录（运行时动态发现）
-`GET /v1/models` → 取 `modalities.output` 含 `image` 的 `id`，再并入 `IMAGE_MODEL`（默认 `codex/gpt-image-2`）。
-**不能只按目录过滤**：本机实测 93 个模型里只有 `minimax-code/MiniMax-Image` 标了图片输出，默认模型 `codex/gpt-image-2` 根本不在目录里（指定它照样能出图），只按目录过滤会让默认模型凭空消失。用 `IMAGE_MODELS` 可以完全跳过目录请求。
+`GET /v1/models` → 取 `modalities.output` 含 `image` 的 `id`，再并入 `IMAGE_MODEL`（默认 `codex/gpt-image-2.5`）。
+**不能只按目录过滤**：本机实测 93 个模型里只有 `minimax-code/MiniMax-Image` 标了图片输出，默认模型 `codex/gpt-image-2.5` 根本不在目录里（指定它照样能出图），只按目录过滤会让默认模型凭空消失。用 `IMAGE_MODELS` 可以完全跳过目录请求。
 目录可见 ≠ 健康；不发自动付费探测。
 
 ## 生成参数约定
@@ -28,7 +28,7 @@
 ## 成本基线（2025-11 公开价，供定价参考，非本项目账单）
 | 模型 | 公开价 | 折算单次(1K) |
 | --- | --- | --- |
-| codex/gpt-image-2 | OpenAI 输出 $30 / 1M image tokens（medium 4096 tokens ≈ $0.123） | ≈ ¥0.9 |
+| codex/gpt-image-2.5 | OpenAI 输出 $30 / 1M image tokens（medium 4096 tokens ≈ $0.123） | ≈ ¥0.9 |
 | minimax-code/MiniMax-Image | MiniMax 图片编辑（1 参考图，1K）¥0.2978/张 | ≈ ¥0.30 |
 | workbuddy/hunyuan-image-alpha | 未取得公开价 | 暂按 ¥0.40 保守估（待核） |
 | workbuddy-ai/hy-image-3.5 | 未取得公开价 | 暂按 ¥0.40 保守估（待核） |

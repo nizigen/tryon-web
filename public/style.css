@@ -1017,6 +1017,14 @@ textarea::placeholder {
   color: var(--muted);
 }
 
+.studio__busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .studio__count.is-over {
   color: #f87171;
 }
