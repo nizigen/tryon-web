@@ -33,7 +33,7 @@ run-demo.cmd
 | --- | --- |
 | `IMAGE_API_BASE_URL` | 图片服务的根地址（含版本前缀），默认 `http://127.0.0.1:3425/v1` |
 | `IMAGE_API_KEY` | 图片服务的密钥，以 `Authorization: Bearer` 发送；留空则不发送该头 |
-| `IMAGE_MODEL` | 默认模型，默认 `codex/gpt-image-2`；会作为兜底项补进模型列表 |
+| `IMAGE_MODEL` | 默认模型，默认 `codex/gpt-image-2`（作者本机的模型名，换成你所用服务里的真实模型名）；会作为兜底项补进模型列表 |
 | `IMAGE_MODELS` | 逗号分隔的模型白名单；填了就不再请求 `/models`，直接用它 |
 | `IMAGE_TIMEOUT_MS` | 单次生成的等待上限（默认 120000） |
 | `CHAT_API_BASE_URL` / `CHAT_API_KEY` | 视觉描述与 AI 选搭用的对话服务；不填则复用图片服务的地址与密钥 |
