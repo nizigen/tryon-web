@@ -1,3 +1,5 @@
+> **已被 v6 取代**：本文件是 v3 时期对 flyne.ai 的深色方向历史实测记录。当前视觉规范见根目录 `FRONTEND_GUIDELINES.md`（framed-sheet：暖石画框 + 白纸面、青灰强调色、无紫色）。
+
 # 前端设计参考：flyne.ai/cn（实测 2025-11-22）
 
 来源：`https://flyne.ai/cn/create/`、`https://flyne.ai/cn/ai-image-generator/`，浏览器实测截图：

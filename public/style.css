@@ -1,6 +1,7 @@
 /* ============================================================
-   搭配试穿间 · 深色工作台
-   令牌来源：docs/frontend-design-reference.md（flyne 实测）
+   搭配试穿间 · 工作台样式
+   基础层保留旧规则的布局骨架；文件末尾的「v6 视觉重做」层
+   重定义令牌并覆盖组件形状（framed-sheet：暖石画框 + 白纸面）。
    ============================================================ */
 
 :root {
@@ -1802,5 +1803,638 @@ textarea::placeholder {
   input[type='url'],
   textarea {
     min-height: 44px;
+  }
+}
+
+/* ============================================================
+   v6 视觉重做 —— framed-sheet（design-taste-frontend · app 规则）
+   方向由 draw.mjs --app 从 247 个站点提炼的样式库抽出：
+   一层暖调画框 + 白色纸面，靠色调差分层、无阴影、无 1px 重边框；
+   强调色只出现在选中态与小标记（青灰），主操作在近黑墨色。
+   这一层通过重定义令牌 + 覆盖组件形状完成，布局结构保持不变。
+   ============================================================ */
+
+:root {
+  /* 画框（暖石色）与纸面 */
+  --bg: #efece6;
+  --surface: #ffffff;
+  --panel: #f8f6f2;
+  /* 输入、内嵌面板 */
+  --panel-2: #ffffff;
+  /* 缩略图槽、更深一档 */
+  --panel-3: #efece5;
+  --hover: #efece5;
+  --ink: #1c1a17;
+  --muted: #6f6a62;
+  --disabled: #a8a29a;
+  --line: #e7e2da;
+  --line-strong: #d8d1c6;
+  /* 强调色：青灰，只用于选中与标记，不再有紫 */
+  --accent-1: #1b6c80;
+  --accent-2: #1b6c80;
+  --accent-soft: #e6eef0;
+  --accent-glow: transparent;
+  --positive: #1e7b4f;
+  --negative: #b42318;
+  /* 角：控件 8px、卡片 10px，不要 999px 药丸与大圆角 */
+  --radius-card: 10px;
+  --radius-panel: 10px;
+  --radius-ctl: 8px;
+  --radius-pill: 8px;
+  --font: "IBM Plex Sans", -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+a {
+  color: var(--accent-2);
+}
+
+/* ---------- 外壳：画框 + 白色纸面 ---------- */
+.app-shell {
+  background: var(--bg);
+}
+
+.sidebar {
+  background: transparent;
+  border-right: 0;
+  padding: 18px 12px;
+}
+
+/* 主区就是那张纸：从画框里浮出一层，右、下各留 8px，无阴影 */
+.view-root {
+  background: var(--surface);
+  margin: 8px 8px 8px 0;
+  border-radius: 16px;
+  min-height: calc(100vh - 16px);
+  max-width: none;
+  padding: 26px clamp(20px, 3.4vw, 44px) 56px;
+}
+
+@media (min-width: 1500px) {
+  .view-root {
+    padding-left: clamp(24px, 9vw, 180px);
+    padding-right: clamp(24px, 9vw, 180px);
+  }
+}
+
+/* 品牌标记：去渐变，实心墨色方块 */
+.brand__mark {
+  background: var(--ink);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sidebar__brand {
+  font-weight: 600;
+  letter-spacing: 0;
+  font-size: 15px;
+}
+
+.demo-badge {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border: 0;
+  border-radius: 6px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+/* ---------- 导航 ---------- */
+.nav__group-title {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0;
+  padding: 4px 10px;
+}
+
+.nav__item {
+  color: var(--muted);
+  border: 0;
+  border-radius: 8px;
+  height: 38px;
+}
+
+.nav__item:hover {
+  background: rgba(28, 26, 23, .05);
+  color: var(--ink);
+}
+
+/* 选中项：白底灰面 + 墨色文字，不用彩色填充 */
+.nav__item.is-active {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.sidebar__foot {
+  border-top: 1px solid var(--line);
+}
+
+.balance-box {
+  background: var(--surface);
+  border: 0;
+  border-radius: 8px;
+}
+
+.sidebar__note {
+  color: var(--muted);
+}
+
+/* ---------- 页头与卡片 ---------- */
+.page-title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+
+.page-sub {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* 卡片：暖白一档，无边框、无阴影，靠色调差与纸面分开 */
+.card {
+  background: var(--panel);
+  border: 0;
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+
+.section__title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.section__hint {
+  color: var(--muted);
+}
+
+.divider {
+  background: var(--line);
+}
+
+/* ---------- 按钮：扁平、近黑主操作、8px 角 ---------- */
+.btn {
+  min-height: 40px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color .15s ease, border-color .15s ease, opacity .15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--line-strong);
+}
+
+.btn--primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: #000;
+  border-color: #000;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: rgba(28, 26, 23, .05);
+  border-color: transparent;
+}
+
+/* ---------- 胶囊下拉：方形化，展开面为白纸 ---------- */
+.capsule-trigger {
+  height: 40px;
+  line-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.capsule-trigger:hover {
+  background: var(--hover);
+  border-color: var(--line-strong);
+}
+
+.capsule-select.is-open .capsule-trigger {
+  border-color: var(--accent-2);
+  background: var(--surface);
+}
+
+.capsule-menu {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(28, 26, 23, .12);
+}
+
+.capsule-item {
+  border-radius: 6px;
+}
+
+.capsule-item:hover,
+.capsule-item.is-active {
+  background: var(--hover);
+}
+
+/* ---------- 分段 / 筛选 / 标签 ---------- */
+.segmented {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  gap: 2px;
+  padding: 3px;
+}
+
+.segment {
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.segment.is-active {
+  background: var(--hover);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.filter {
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: 8px;
+  color: var(--muted);
+}
+
+.filter.is-active {
+  border-color: var(--accent-2);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.tag {
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.tag--accent {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent-2);
+}
+
+/* ---------- 表单 ---------- */
+.field__label {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.field__hint {
+  color: var(--muted);
+}
+
+.error-text {
+  color: var(--negative);
+}
+
+input[type="text"],
+input[type="search"],
+input[type="url"],
+textarea {
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--accent-2);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--disabled);
+}
+
+/* ---------- 空态 / 骨架：去渐变 ---------- */
+.empty {
+  color: var(--muted);
+}
+
+.empty__title {
+  color: var(--ink);
+}
+
+.skeleton {
+  background: var(--panel-3);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* ---------- 橱窗 ---------- */
+.product {
+  background: var(--panel);
+  border: 0;
+  border-radius: 10px;
+}
+
+.product:hover {
+  background: var(--hover);
+  border-color: transparent;
+}
+
+.product__media {
+  background: var(--panel-3);
+}
+
+.product__badge {
+  background: rgba(28, 26, 23, .72);
+  border: 0;
+  border-radius: 5px;
+}
+
+.import-cta {
+  border: 0;
+  background: var(--panel);
+  border-radius: 10px;
+}
+
+/* ---------- 工作台 ---------- */
+.dropzone {
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  border-radius: 10px;
+}
+
+.dropzone.is-dragging {
+  border-color: var(--accent-2);
+  background: var(--accent-soft);
+}
+
+.dropzone__title {
+  color: var(--muted);
+}
+
+.slot {
+  background: var(--panel);
+  border: 0;
+  border-radius: 10px;
+}
+
+/* 已填格子：淡强调底，不描边 */
+.slot.is-filled {
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.slot__pill {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.piece {
+  background: var(--surface);
+  border: 0;
+  border-radius: 8px;
+}
+
+.piece__thumb {
+  background: var(--panel-3);
+}
+
+.piece__remove {
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+}
+
+.piece__remove:hover {
+  color: var(--negative);
+  background: rgba(180, 35, 24, .08);
+}
+
+.piece-empty,
+.slot__add {
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  border-radius: 8px;
+}
+
+.piece-empty:hover,
+.slot__add:hover {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.piece-add {
+  border-color: var(--line-strong);
+}
+
+.piece-add:hover:not(:disabled) {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.studio__hint {
+  color: #92400e;
+  background: #fdf6e8;
+  border: 0;
+  border-radius: 8px;
+}
+
+.studio__busy,
+.studio__count {
+  color: var(--muted);
+}
+
+.studio__count.is-over {
+  color: var(--negative);
+}
+
+/* ---------- 结果区 ---------- */
+.result__title {
+  font-weight: 600;
+}
+
+.stage {
+  background: var(--accent-soft);
+  border: 0;
+  border-radius: 10px;
+}
+
+.spinner {
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent-2);
+}
+
+.canvas {
+  background: var(--panel-3);
+  border: 0;
+  border-radius: 10px;
+}
+
+.compare img {
+  border: 0;
+  background: var(--panel-3);
+}
+
+/* ---------- 设置 / 我的 ---------- */
+.kv {
+  border-bottom: 1px solid var(--line);
+}
+
+.kv__label {
+  color: var(--ink);
+}
+
+.status-pill {
+  border-radius: 6px;
+}
+
+.status-pill.is-on {
+  color: var(--positive);
+  background: rgba(30, 123, 79, .1);
+  border: 0;
+}
+
+.status-pill.is-off {
+  color: var(--muted);
+  background: var(--panel);
+  border: 0;
+}
+
+.list-row {
+  background: var(--panel);
+  border: 0;
+  border-radius: 10px;
+}
+
+.list-row:hover {
+  background: var(--hover);
+  border-color: transparent;
+}
+
+.status {
+  border-radius: 6px;
+  background: var(--panel);
+  border: 0;
+  color: var(--muted);
+}
+
+.status--success {
+  color: var(--positive);
+  background: rgba(30, 123, 79, .1);
+  border-color: transparent;
+}
+
+.status--failed {
+  color: var(--negative);
+  background: rgba(180, 35, 24, .1);
+  border-color: transparent;
+}
+
+/* ---------- 导入 ---------- */
+.import__thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--panel-3);
+}
+
+.import__thumb.is-active {
+  border-color: var(--accent-2);
+}
+
+.thumb__check {
+  background: var(--accent-2);
+  border-radius: 6px;
+}
+
+/* ---------- Toast ---------- */
+.toast {
+  background: var(--ink);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(28, 26, 23, .22);
+}
+
+/* ---------- 弹层 ---------- */
+.picker {
+  background: rgba(28, 26, 23, .45);
+}
+
+.picker__item {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.picker__item:hover,
+.picker__item:focus-visible {
+  border-color: var(--accent-2);
+  background: var(--surface);
+}
+
+.picker__item img {
+  background: var(--panel-3);
+}
+
+/* ---------- 移动端：画框消失，纸面即屏幕 ---------- */
+@media (max-width: 767px) {
+  .sidebar {
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: none;
+    padding: 10px 12px;
+  }
+
+  .nav__item {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 8px;
+  }
+
+  .view-root {
+    margin: 0;
+    border-radius: 0;
+    min-height: auto;
+    padding: 18px 14px calc(40px + var(--safe-bottom));
   }
 }

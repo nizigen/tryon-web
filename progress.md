@@ -357,3 +357,32 @@
 **未验证**
 - 多件（外套/下装/鞋）在新两栏布局下的结果展示未单独截图；结构上与单件一致。
 
+
+## 2025-11-23 · v6：视觉重做（framed-sheet，去紫色 + 弱化边界 + 组件重做）
+
+用户原话："你这都没找其他参考啊，我觉得你这些组件太丑了，还有不要用紫色好吧，AI味太重了，你按vibe-coding前端流程来做啊，组件都改一下，不要按照原来demo哪些组件了，记得弱化边界"
+
+**做法（vibe-coding 前端轨道）**
+- 参考：读 design-taste-frontend 的 references/app-screens.md（23 个真实产品实测规则）；用它自己的 \scripts/draw.mjs --app\ 从站点样式库抽出方向 \ramed-sheet\（seed 1470960127），令牌与结构记进 FRONTEND_GUIDELINES.md。
+- 只换视觉层、不动布局骨架：重定义 :root 令牌 + 覆盖全部组件形状，追加在 style.css 末尾（约 480 行）；style-wardrobe.css 的暗色残留（#b91c1c / rgba(255,255,255,…) / #fbbf24 / 深色模态阴影）逐条换成令牌。
+- 去紫色：accent 由 #7c3aed/#a855f7 换青灰 #1b6c80；主按钮由紫色渐变胶囊改为近黑墨色 8px 方角；999px 药丸全部改 8px。
+- 弱化边界：卡片改"无边框无阴影、靠色调差分层"（白纸 #fff 上放 #f8f6f2 卡片）；仅在确需线条处保留 1px #e7e2da 极浅线。
+- 字体：引入 IBM Plex Sans（+ Mono 管数字/ID），配 CJK 回退。
+- index.html：theme-color 改 #efece6、加 Google Fonts preconnect 与样式表。
+
+**验证（全部实测）**
+- \
+ode --test\ 137/137 通过。
+- 18 组截图（6 路由 × 1440/768/390）无横向溢出。
+- 对比度审计：全路由 0 处低于 3.0（先前 .sidebar__note 2.15 已修）。
+- 设计审计：全路由阴影 0、渐变 0；可见边框只剩极浅 line/line-strong。
+- 整图像素统计：平均亮度 226–247（浅色确认），彩色 0.3–4.4%，紫色 ≈0.005%（紫已清除）。
+- 几何：1440 下 controls 460px + preview 609px 真两列、preview sticky；390 下侧栏变 59px 顶条、单列。
+- 真实出图：预设商品真跑一次，\生成中\ 转圈可见（animations=1、spinner hidden=false），结果 744×2114。
+
+**坑**
+- 审计读的是浏览器缓存旧 CSS（\max-age=300\）→ 审计/截图脚本改成每次带时间戳的 \--user-data-dir\，否则结论失真。
+- PowerShell 5.1 没有 \-Encoding utf8NoBOM\，批量改文件用 \[System.IO.File]::WriteAllText\ + \UTF8Encoding(\False)\。
+
+**未验**
+- 只在 1440/768/390 三档验过；平板横屏 1024/1180 未逐页复核；深色系统偏好下的表现未测（当前是固定浅色）。

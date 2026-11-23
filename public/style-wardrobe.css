@@ -30,8 +30,8 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
+  background: var(--panel);
+  border: 0;
   border-radius: var(--radius-panel);
   overflow: hidden;
 }
@@ -85,8 +85,8 @@
   justify-content: center;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
-  background: rgba(0, 0, 0, .55);
-  color: var(--ink);
+  background: rgba(28, 26, 23, .55);
+  color: #fff;
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
@@ -94,8 +94,8 @@
 }
 
 .wardrobe-card__del:hover:not(:disabled) {
-  background: #b91c1c;
-  border-color: #b91c1c;
+  background: var(--negative);
+  border-color: var(--negative);
 }
 
 .wardrobe-card__del:disabled {
@@ -121,7 +121,7 @@
 .wardrobe-empty__title {
   margin: 0;
   font-size: 15px;
-  color: rgba(255, 255, 255, .8);
+  color: var(--ink);
 }
 
 .wardrobe-empty__actions {
@@ -158,10 +158,10 @@
   flex-direction: column;
   gap: 14px;
   padding: 22px;
-  background: var(--panel);
-  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border: 0;
   border-radius: var(--radius-card);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+  box-shadow: 0 24px 60px rgba(28, 26, 23, .22);
 }
 
 .modal__title {
@@ -241,7 +241,7 @@
 
 .stylist__slot-name {
   font-size: 13px;
-  color: rgba(255, 255, 255, .82);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -250,7 +250,7 @@
 .stylist__reason {
   margin: 0;
   font-size: 14px;
-  color: rgba(255, 255, 255, .85);
+  color: var(--ink);
   padding: 10px 12px;
   background: var(--accent-soft);
   border-radius: var(--radius-ctl);
@@ -259,7 +259,7 @@
 .stylist__missing {
   margin: 0;
   font-size: 13px;
-  color: #fbbf24;
+  color: #92400e;
 }
 
 .stylist__order {
@@ -357,7 +357,7 @@
 .login-row__label {
   min-width: 56px;
   font-size: 14px;
-  color: rgba(255, 255, 255, .85);
+  color: var(--ink);
 }
 
 .login-row__action {

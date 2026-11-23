@@ -81,7 +81,7 @@
 | `#/wardrobe` | 我的衣橱 | 已导入/收藏的单品，可直接带入工作台 |
 | `#/settings` | 设置 | 模型选择、cookie 状态、网关状态、演示模式说明 |
 
-视觉一律按 `docs/frontend-design-reference.md`（flyne 深色工作台）。
+视觉一律按 `FRONTEND_GUIDELINES.md`（v6 framed-sheet：暖石画框 + 白纸面、无紫色）；`docs/frontend-design-reference.md` 只是 v3 时期对 flyne 的历史实测记录，已被 v6 取代。
 
 ## 9. 与 TryItOn 原扩展的关系（REA 实证）
 `docs/rea-tryiton-categories.md` 结论：原扩展 v9.0.0 **只支持单件单分类**（`POST /tryon/clothes` 只带一个 file + 一个 category + 至多一个 subcategory，无数组），Live 模式也只是「≤12 个 look 逐个切换」，不是同帧叠穿。它的分类字典是：
