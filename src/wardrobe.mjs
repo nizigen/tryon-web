@@ -272,6 +272,33 @@ export function createWardrobe({ dir = 'data', fetchImpl = fetch, env = process.
       });
     },
 
+    /**
+     * 修改一件单品的名称 / 类目 / 子类 / 标签 / 描述。图片不参与修改（换图请重新上传）。
+     * 只改传入的字段，其余保持原样；找不到返回 null。
+     */
+    async update(id, patch = {}) {
+      return serialize(async () => {
+        await ensureLoaded();
+        const index = items.findIndex((item) => item.id === id);
+        if (index < 0) return null;
+        const next = { ...items[index] };
+        if (patch.name !== undefined) {
+          const name = cleanText(patch.name, 120);
+          if (!name) throw new HttpError(400, 'INVALID_REQUEST', '单品名称不能为空', 'name');
+          next.name = name;
+        }
+        if (patch.category !== undefined) next.category = requireCategory(patch.category);
+        if (patch.subtype !== undefined) next.subtype = cleanText(patch.subtype, 40);
+        if (patch.tags !== undefined) next.tags = normalizeTags(patch.tags);
+        if (patch.description !== undefined) next.description = cleanText(patch.description, 200);
+        const list = items.slice();
+        list[index] = next;
+        await persist(list);
+        items = list;
+        return next;
+      });
+    },
+
     async readImage(id) {
       await ensureLoaded();
       const item = items.find((entry) => entry.id === id);

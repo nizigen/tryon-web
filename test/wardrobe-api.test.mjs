@@ -117,6 +117,37 @@ test('衣橱：空列表、上传、取图、搜索、删除', async () => {
   });
 });
 
+test('衣橱：PATCH 修改名称和类目', async () => {
+  await withServer({}, async ({ call }) => {
+    const created = await call('/api/wardrobe', {
+      method: 'POST',
+      body: JSON.stringify({ name: '米色针织开衫', category: 'top', subtype: 'knit', tags: ['针织'], image: IMAGE }),
+    });
+    const id = created.payload.item.id;
+
+    const patched = await call(`/api/wardrobe/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: '焦糖色开衫', category: 'outer', subtype: '开衫' }),
+    });
+    assert.equal(patched.status, 200);
+    assert.equal(patched.payload.item.name, '焦糖色开衫');
+    assert.equal(patched.payload.item.category, 'outer');
+    assert.equal(patched.payload.item.subtype, '开衫');
+    assert.deepEqual(patched.payload.item.tags, ['针织'], '未传字段应保留');
+
+    const list = await call('/api/wardrobe');
+    assert.equal(list.payload.items[0].name, '焦糖色开衫');
+
+    const missing = await call('/api/wardrobe/not-exist', { method: 'PATCH', body: JSON.stringify({ name: 'x' }) });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.payload.error.code, 'WARDROBE_NOT_FOUND');
+
+    const badCategory = await call(`/api/wardrobe/${id}`, { method: 'PATCH', body: JSON.stringify({ category: 'hat' }) });
+    assert.equal(badCategory.status, 400);
+    assert.equal(badCategory.payload.error.code, 'INVALID_REQUEST');
+  });
+});
+
 test('衣橱：上传非法图片被拒', async () => {
   await withServer({}, async ({ call }) => {
     const response = await call('/api/wardrobe', {

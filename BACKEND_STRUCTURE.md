@@ -9,7 +9,7 @@ src/imageapi.mjs      OpenAI 兼容图片服务：模型目录、images/generati
 src/prompt.mjs        服装分类体系与结构化提示词
 src/pricing.mjs       按模型/档位的定价表与成本估算
 src/source.mjs        商品链接取图：平台识别、短链跟随、淘宝/抖音直连、OpenCLI 兜底、TTL 缓存
-src/wardrobe.mjs      我的衣橱：入库（上传 / 导入结果）、取图、删除、BM25 检索
+src/wardrobe.mjs      我的衣橱：入库（上传 / 导入结果）、编辑、取图、删除、BM25 检索
 src/caption.mjs       视觉描述：调对话模型给单品写一句中文描述（失败返回空串）
 src/outfit.mjs        AI 今日穿搭：检索候选 → 模型选搭（严格校验）→ 规则回退
 src/login.mjs         扫码登录：拉起受控 Chrome、CDP 读全量 cookie（含 HttpOnly）、写 cookies.json
@@ -120,6 +120,7 @@ src/errors.mjs        统一错误类型
 | GET | /api/wardrobe | — | `{ items:[{id,name,category,subtype,tags,description,source,imageUrl,createdAt}] }` |
 | POST | /api/wardrobe | `{ name, category, subtype?, tags?, description?, image }` 或 `{ ..., sourceId, sourceIndex }`（从导入结果取图） | `{ item }`（201） |
 | DELETE | /api/wardrobe/:id | — | `{ ok:true }`（不存在 404 `WARDROBE_NOT_FOUND`） |
+| PATCH | /api/wardrobe/:id | `{ name?, category?, subtype?, tags?, description? }`（只改传入字段，图片不参与） | `{ item }`（不存在 404 `WARDROBE_NOT_FOUND`，名称空/类目非法 400 `INVALID_REQUEST`） |
 | GET | /api/wardrobe/:id/image | — | 单品图二进制（`no-store`、`nosniff`） |
 | POST | /api/wardrobe/search | `{ query }` | `{ results:[{item,score}] }`（BM25，只回 score>0） |
 | POST | /api/outfit/suggest | `{ request }`（≤200 码点） | `{ suggestion:{ slots:{top?,outer?,bottom?,dress?,hosiery?,shoes?,accessory?}, reason, missing:[slot] } }`（`slots` 里每格是衣橱单品视图，配饰可能是数组） |

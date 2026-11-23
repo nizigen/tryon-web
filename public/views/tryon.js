@@ -15,8 +15,8 @@ export function renderTryon(root, ctx, productId) {
       ]),
       h('div', { class: 'empty' }, [
         h('p', { class: 'empty__title', text: '没有找到这件商品' }),
-        h('p', { text: '商品可能已下架，去橱窗看看其它单品吧。' }),
-        h('button', { type: 'button', class: 'btn btn--sm', text: '回到橱窗', onclick: () => ctx.onNavigate('shop') }),
+        h('p', { text: '这件商品可能已经下架，去工作台挑别的单品吧。' }),
+        h('button', { type: 'button', class: 'btn btn--sm', text: '回到工作台', onclick: () => ctx.onNavigate('studio') }),
       ]),
     );
     return;

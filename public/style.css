@@ -882,7 +882,7 @@ textarea::placeholder {
 .dropzone__title {
   margin: 0;
   font-size: 14px;
-  color: rgba(255, 255, 255, .8);
+  color: var(--muted);
 }
 
 .dropzone__actions {
@@ -2192,10 +2192,43 @@ textarea::placeholder {
 }
 
 /* ---------- 工作台 ---------- */
+/* 空态是虚线投放框；已有照片时去掉虚线，改成左侧小缩略图 + 右侧文字的一行 */
 .dropzone {
   border: 1px dashed var(--line-strong);
   background: transparent;
   border-radius: 10px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+}
+
+.dropzone.has-image {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.dropzone__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dropzone__preview {
+  width: 72px;
+  height: 96px;
+  max-height: none;
+  object-fit: cover;
+  object-position: center top;
+  border-radius: 8px;
+  flex: none;
+}
+
+.dropzone.has-image .dropzone__title {
+  color: var(--ink);
 }
 
 .dropzone.is-dragging {

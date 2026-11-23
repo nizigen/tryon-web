@@ -74,6 +74,35 @@
   border: 1px solid var(--line);
 }
 
+.wardrobe-card__edit {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: rgba(28, 26, 23, .55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color .16s ease, border-color .16s ease;
+}
+
+.wardrobe-card__edit:hover:not(:disabled) {
+  background: var(--accent-1);
+  border-color: var(--accent-1);
+}
+
+.wardrobe-card__edit:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
 .wardrobe-card__del {
   position: absolute;
   top: 8px;

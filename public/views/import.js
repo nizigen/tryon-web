@@ -172,6 +172,7 @@ export function renderImport(root, ctx) {
       h('div', { class: 'field' }, [
         h('span', { class: 'field__label', text: '商品链接' }),
         h('div', { class: 'inline-field' }, [urlInput, parseBtn]),
+        h('span', { class: 'field__hint', text: '支持单个商品的详情链接（淘宝 / 天猫、京东、拼多多）和抖音商城的商品分享链接。博主橱窗或主页链接暂不支持——那需要平台授权才能读取，请点进具体商品再复制它的链接。' }),
         errorEl,
       ]),
       h('div', { class: 'field' }, [

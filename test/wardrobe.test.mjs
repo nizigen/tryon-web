@@ -174,6 +174,41 @@ test('注入的 captioner 失败不影响入库', async () => {
   }
 });
 
+test('update 只改传入字段，并落盘持久化', async () => {
+  const dir = freshDir();
+  try {
+    const wardrobe = createWardrobe({ dir });
+    const created = await wardrobe.add(sample());
+
+    const renamed = await wardrobe.update(created.id, { name: '奶白色衬衫', category: 'outer', subtype: '开衫' });
+    assert.equal(renamed.name, '奶白色衬衫');
+    assert.equal(renamed.category, 'outer');
+    assert.equal(renamed.subtype, '开衫');
+    assert.deepEqual(renamed.tags, ['白衬衫', '通勤'], '未传的字段应保留原值');
+    assert.equal(renamed.imageFile, created.imageFile, '图片不应因编辑而改变');
+    assert.equal(renamed.createdAt, created.createdAt, '创建时间不应被编辑覆盖');
+
+    // 重新打开（新实例读盘）确认持久化了。
+    const reopened = createWardrobe({ dir });
+    const persisted = await reopened.get(created.id);
+    assert.equal(persisted.name, '奶白色衬衫');
+    assert.equal(persisted.category, 'outer');
+    assert.equal(persisted.subtype, '开衫');
+
+    assert.equal(await wardrobe.update('不存在的id', { name: 'x' }), null);
+    await assert.rejects(
+      () => wardrobe.update(created.id, { name: '   ' }),
+      (error) => error.status === 400 && error.code === 'INVALID_REQUEST',
+    );
+    await assert.rejects(
+      () => wardrobe.update(created.id, { category: 'hat' }),
+      (error) => error.status === 400 && error.code === 'INVALID_REQUEST',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('索引被改成目录穿越的 imageFile 时不会读到目录外的文件', async () => {
   const dir = freshDir();
   try {

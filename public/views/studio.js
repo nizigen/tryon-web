@@ -517,6 +517,7 @@ export function renderStudio(root, ctx, preset) {
       uploadPreview.hidden = true;
       personBtn.textContent = '拍照 / 相册';
     }
+    dropzone.classList.toggle('has-image', Boolean(state.person));
     updateSubmit();
   }
 
@@ -686,10 +687,12 @@ export function renderStudio(root, ctx, preset) {
 
   const dropzone = h('div', { class: 'dropzone' }, [
     uploadPreview,
-    h('p', { class: 'dropzone__title', text: '默认用内置模特；也可以上传自己的全身照，正面站立、背景干净效果最好' }),
-    h('div', { class: 'dropzone__actions' }, [personBtn]),
-    h('p', { class: 'field__hint', text: 'PNG / JPEG / WebP，不超过 8MB；照片只用于本次生成。' }),
-    uploadError,
+    h('div', { class: 'dropzone__meta' }, [
+      h('p', { class: 'dropzone__title', text: '默认用内置模特；也可以上传自己的全身照，正面站立、背景干净效果最好' }),
+      h('div', { class: 'dropzone__actions' }, [personBtn]),
+      h('p', { class: 'field__hint', text: 'PNG / JPEG / WebP，不超过 8MB；照片只用于本次生成。' }),
+      uploadError,
+    ]),
     personInput,
   ]);
   personBtn.addEventListener('click', () => personInput.click());

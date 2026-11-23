@@ -62,11 +62,11 @@ function currentRoute() {
   const [route, id] = hash.split('/');
   if (route === 'tryon' && id) return { route: 'tryon', id };
   if (['shop', 'studio', 'wardrobe', 'settings', 'import', 'me'].includes(route)) return { route };
-  return { route: 'shop' };
+  return { route: 'studio' };
 }
 
 function setActiveNav(route) {
-  const active = route === 'tryon' ? 'studio' : route === 'import' ? 'shop' : route;
+  const active = route === 'tryon' ? 'studio' : route === 'import' ? 'wardrobe' : route;
   for (const item of document.querySelectorAll('.nav__item')) {
     const on = item.dataset.route === active;
     item.classList.toggle('is-active', on);

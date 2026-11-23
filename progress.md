@@ -386,3 +386,34 @@ ode --test\ 137/137 通过。
 
 **未验**
 - 只在 1440/768/390 三档验过；平板横屏 1024/1180 未逐页复核；深色系统偏好下的表现未测（当前是固定浅色）。
+
+## 2025-11-23 · v6 补丁：橱窗隐藏 + 衣橱可编辑 + 人物照去常驻虚线框
+
+用户原话："现在单品标签为什么不能改呢？还有橱窗先步展示吧……然后是图片能不能不要一直有那个虚线框？你要有的话就吧模特图先换到一边啊"
+
+**判断**
+- 「单品标签不能改」：工作台每条的大类/子类是两级胶囊，可改；真正改不了的是「我的衣橱」卡片——只有删除。→ 补衣橱编辑。
+- 「橱窗先不展示」：把侧栏「橱窗」入口隐藏，默认路由改工作台；同时告知抖音博主橱窗/主页链接无法解析（无公开接口，需精选联盟授权），导入页明确只支持单件商品链接。
+- 「一直有虚线框」：`.dropzone` 无论有没有照片都是虚线。→ 空态才虚线；有图换左侧 72×96 小缩略图 + 右侧文字的一行。
+
+**变更**
+- `src/wardrobe.mjs` 新增 `update(id, patch)`：只改传入字段（name/category/subtype/tags/description），图片与 createdAt 不变；名称空/类目非法抛 400，找不到返回 null；原子写 + 串行队列。
+- `src/app.mjs` 新增 `handleWardrobeUpdate` 与 `PATCH /api/wardrobe/:id` 路由。
+- `public/views/wardrobe.js`：卡片加 `.wardrobe-card__edit`「✎」按钮 + `openEditModal(item)`（名称输入 + 两级类目，PATCH 后提示「已保存」刷新）；空态按钮「去橱窗逛逛」→「去搭配工作台」。
+- `public/style-wardrobe.css`：新增 `.wardrobe-card__edit`（左上角圆形深底，hover 青色）。
+- `public/index.html`：shop 导航项加 `hidden`；`public/app.js`：默认路由 `shop→studio`、import 高亮归 `wardrobe`；`public/views/tryon.js`：「回到橱窗」→「回到工作台」。
+- `public/views/import.js`：商品链接字段下加说明（支持单件商品/抖音商城分享；博主橱窗/主页需授权，暂不支持）。
+- `public/views/studio.js`：dropzone 拆成 `uploadPreview + .dropzone__meta`；`paintPerson()` 里 `dropzone.classList.toggle('has-image', Boolean(state.person))`。
+- `public/style.css`：v6 `.dropzone` 改 flex 行、空态虚线；`.dropzone.has-image` 无边框无内边距；`.dropzone__preview` 72×96 object-fit cover；`.dropzone__title` 的 `rgba(255,255,255,.8)`→`var(--muted)`（暗色残留）。
+
+**验证**
+- `node --test` **139/139 pass**（新增 `test/wardrobe.test.mjs` 的 update 持久化/边界用例、`test/wardrobe-api.test.mjs` 的 PATCH 用例）。
+- 一次全量跑出现 `test/api.test.mjs` 单条 `bad port`（`app.listen(0)` 撞上 undici 禁用端口的偶发），单跑该文件 39/39、全量重跑 139/139 均通过。
+- 真实 43130 演示服务（demoMode=true、gateway reachable）重启后，PATCH `/api/wardrobe/nope` 带 Origin 返 404 `WARDROBE_NOT_FOUND`（新路由生效）。
+- `artifacts/probe-ui12449.mjs`（CDP 真视口）：默认路由空 hash → studio；studio 1440/768/390 的 `.dropzone` 均 `dropzone has-image`、`border-style:none`、缩略图 72×96、shop 导航隐藏、无横向溢出；wardrobe 16 卡片 / 16 编辑按钮、无溢出；1440 打开编辑弹窗 title「编辑单品」、名称已预填、两级胶囊存在。
+- `artifacts/probe-edit-save.mjs`：打开第一件编辑弹窗→原值保存→弹窗关闭、toast「已保存」（非破坏性，仅回写同值）。
+- 截图存 `artifacts/shots/ui12449-studio-*.png`、`ui12449-wardrobe-*.png`、`ui12449-edit-modal-1440.png`。
+
+**未验**
+- 编辑弹窗改「大类」后二级子类的联动表现只按代码路径核对（未逐个类目点）；真实手机端未复测（仅 390 视口模拟）。
+- 抖音博主橱窗解析确认无公开接口，本轮未做（能力边界，非缺陷）。

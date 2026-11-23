@@ -754,6 +754,14 @@ async function handleWardrobeDelete(context) {
   response.end();
 }
 
+async function handleWardrobeUpdate(context) {
+  const { response, request, wardrobe, wardrobeId, clock } = context;
+  const input = await readJsonBody(request, clock.signal);
+  const item = await wardrobe.update(wardrobeId, input ?? {});
+  if (!item) throw new HttpError(404, 'WARDROBE_NOT_FOUND', '这件单品不在衣橱里');
+  sendJson(response, 200, { item: wardrobeItemView(item) });
+}
+
 async function handleWardrobeImage(context) {
   const { response, wardrobe, wardrobeId } = context;
   const image = await wardrobe.readImage(wardrobeId);
@@ -834,6 +842,7 @@ const ROUTES = [
   { method: 'POST', pattern: /^\/api\/wardrobe$/, handler: handleWardrobeCreate },
   { method: 'POST', pattern: /^\/api\/wardrobe\/search$/, handler: handleWardrobeSearch },
   { method: 'DELETE', pattern: /^\/api\/wardrobe\/(?<wardrobeId>[^/]+)$/, handler: handleWardrobeDelete },
+  { method: 'PATCH', pattern: /^\/api\/wardrobe\/(?<wardrobeId>[^/]+)$/, handler: handleWardrobeUpdate },
   { method: 'GET', pattern: /^\/api\/wardrobe\/(?<wardrobeId>[^/]+)\/image$/, handler: handleWardrobeImage },
   { method: 'POST', pattern: /^\/api\/outfit\/suggest$/, handler: handleOutfitSuggest },
   { method: 'POST', pattern: /^\/api\/login\/(?<platform>taobao|jd|pdd)$/, handler: handleLoginStart },

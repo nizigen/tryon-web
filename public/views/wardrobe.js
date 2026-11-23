@@ -110,6 +110,13 @@ export function renderWardrobe(root, ctx) {
       text: '×',
     });
     del.addEventListener('click', () => void removeItem(item, del));
+    const edit = h('button', {
+      type: 'button',
+      class: 'wardrobe-card__edit',
+      'aria-label': `编辑${item.name || '单品'}的名称和类目`,
+      text: '✎',
+    });
+    edit.addEventListener('click', () => openEditModal(item));
     return h('article', { class: 'wardrobe-card' }, [
       h('div', { class: 'wardrobe-card__thumb' }, [
         h('img', { src: thumbSrc(item), alt: item.name || '衣橱单品' }),
@@ -118,6 +125,7 @@ export function renderWardrobe(root, ctx) {
         h('span', { class: 'wardrobe-card__name', text: item.name || '未命名单品' }),
         h('span', { class: 'wardrobe-card__cat', text: categoryText(item) }),
       ]),
+      edit,
       del,
     ]);
   }
@@ -126,7 +134,7 @@ export function renderWardrobe(root, ctx) {
     return h('div', { class: 'wardrobe-empty' }, [
       h('p', { class: 'wardrobe-empty__title', text: '衣橱还是空的，上传或从商品链接导入一件吧' }),
       h('div', { class: 'wardrobe-empty__actions' }, [
-        h('button', { type: 'button', class: 'btn btn--primary', text: '去橱窗逛逛', onclick: () => ctx.onNavigate('shop') }),
+        h('button', { type: 'button', class: 'btn btn--primary', text: '去搭配工作台', onclick: () => ctx.onNavigate('studio') }),
         h('button', { type: 'button', class: 'btn', text: '从商品链接导入', onclick: () => ctx.onNavigate('import') }),
       ]),
     ]);
@@ -290,6 +298,86 @@ export function renderWardrobe(root, ctx) {
       h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '加入衣橱' }, [
         h('h2', { class: 'modal__title', text: '加入衣橱' }),
         h('div', { class: 'modal__preview' }, [h('img', { src: dataUrl, alt: '待上传单品' })]),
+        h('div', { class: 'field' }, [
+          h('span', { class: 'field__label', text: '单品名称' }),
+          nameInput,
+        ]),
+        h('div', { class: 'field' }, [
+          h('span', { class: 'field__label', text: '类目' }),
+          cascade.el,
+        ]),
+        errEl,
+        h('div', { class: 'modal__actions' }, [cancel, submit]),
+      ]),
+    ]);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    modalHost.append(overlay);
+    nameInput.focus();
+  }
+
+  // ---- 编辑已有单品（名称 / 类目） ----
+  function openEditModal(item) {
+    modalHost.replaceChildren();
+    modalHost.hidden = false;
+
+    const nameInput = h('input', { type: 'text', class: 'search', maxlength: '40', value: item.name || '', placeholder: '给这件单品起个名字' });
+    const cascade = createCascadeSelect({
+      groups: CASCADE_GROUPS,
+      value: SLOT_BY_KEY[item.category] ? item.category : 'top',
+      subValue: item.subtype || '',
+      placeholder: '选择大类',
+      subPlaceholder: '选择子类',
+      ariaLabel: '这件单品的类目',
+    });
+    const errEl = h('p', { class: 'error-text', hidden: true });
+    const submit = h('button', { type: 'button', class: 'btn btn--primary', text: '保存' });
+    const cancel = h('button', { type: 'button', class: 'btn', text: '取消' });
+
+    function close() {
+      modalHost.replaceChildren();
+      modalHost.hidden = true;
+    }
+
+    cancel.addEventListener('click', close);
+    submit.addEventListener('click', async () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        errEl.textContent = '请填写单品名称';
+        errEl.hidden = false;
+        nameInput.focus();
+        return;
+      }
+      submit.disabled = true;
+      cancel.disabled = true;
+      submit.textContent = '保存中…';
+      errEl.hidden = true;
+      try {
+        await api(`/api/wardrobe/${encodeURIComponent(item.id)}`, {
+          method: 'PATCH',
+          body: {
+            name,
+            category: cascade.getValue(),
+            subtype: cascade.getSubValue(),
+          },
+        });
+        close();
+        toast('已保存');
+        await loadItems();
+      } catch (error) {
+        errEl.textContent = errorText(error);
+        errEl.hidden = false;
+        submit.disabled = false;
+        cancel.disabled = false;
+        submit.textContent = '保存';
+      }
+    });
+
+    const overlay = h('div', { class: 'modal-overlay' }, [
+      h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '编辑单品' }, [
+        h('h2', { class: 'modal__title', text: '编辑单品' }),
+        h('div', { class: 'modal__preview' }, [h('img', { src: thumbSrc(item), alt: item.name || '衣橱单品' })]),
         h('div', { class: 'field' }, [
           h('span', { class: 'field__label', text: '单品名称' }),
           nameInput,
