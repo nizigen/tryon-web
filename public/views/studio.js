@@ -1,6 +1,7 @@
 import { api, getSessionId } from '../lib/api.js';
 import { createCascadeSelect, h, toast } from '../lib/dom.js';
 import { SLOTS, SLOT_BY_KEY, defaultSubtype } from '../lib/garment-taxonomy.js';
+import { loadDefaultPerson } from '../lib/person.js';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PROMPT_CHARS = 500;
@@ -37,6 +38,8 @@ const GROUPS = SLOTS.map((def) => ({
 export function renderStudio(root, ctx, preset) {
   const state = {
     person: null,
+    /** true 表示人物照是内置模特（还没换成自己的），仅用于提示文案。 */
+    personIsDefault: false,
     prompt: '',
     fit: 'regular',
     tab: 'result',
@@ -60,6 +63,7 @@ export function renderStudio(root, ctx, preset) {
   const uploadPreview = h('img', { class: 'dropzone__preview', alt: '人物照片预览', hidden: true });
   const uploadError = h('p', { class: 'error-text', hidden: true });
   const personInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', hidden: true });
+  const personBtn = h('button', { type: 'button', class: 'btn btn--sm', text: '拍照 / 相册' });
 
   const promptInput = h('textarea', { rows: 3, maxlength: String(MAX_PROMPT_CHARS), placeholder: '可选：补充面料、版型或风格要求' });
   const promptCounter = h('div', { class: 'counter', text: `0/${MAX_PROMPT_CHARS}` });
@@ -501,8 +505,10 @@ export function renderStudio(root, ctx, preset) {
     if (state.person) {
       uploadPreview.src = state.person;
       uploadPreview.hidden = false;
+      personBtn.textContent = state.personIsDefault ? '换成我的照片' : '更换照片';
     } else {
       uploadPreview.hidden = true;
+      personBtn.textContent = '拍照 / 相册';
     }
     updateSubmit();
   }
@@ -665,19 +671,19 @@ export function renderStudio(root, ctx, preset) {
   // ---- 事件绑定 ----
   personInput.addEventListener('change', () => readImage(personInput.files?.[0], (dataUrl) => {
     state.person = dataUrl;
+    state.personIsDefault = false;
     paintPerson();
   }));
 
   const dropzone = h('div', { class: 'dropzone' }, [
     uploadPreview,
-    h('p', { class: 'dropzone__title', text: '上传一张全身照，正面站立、背景干净效果最好' }),
-    h('div', { class: 'dropzone__actions' }, [
-      h('button', { type: 'button', class: 'btn btn--sm', text: '拍照 / 相册', onclick: () => personInput.click() }),
-    ]),
+    h('p', { class: 'dropzone__title', text: '默认用内置模特；也可以上传自己的全身照，正面站立、背景干净效果最好' }),
+    h('div', { class: 'dropzone__actions' }, [personBtn]),
     h('p', { class: 'field__hint', text: 'PNG / JPEG / WebP，不超过 8MB；照片只用于本次生成。' }),
     uploadError,
     personInput,
   ]);
+  personBtn.addEventListener('click', () => personInput.click());
   dropzone.addEventListener('dragover', (event) => {
     event.preventDefault();
     dropzone.classList.add('is-dragging');
@@ -688,6 +694,7 @@ export function renderStudio(root, ctx, preset) {
     dropzone.classList.remove('is-dragging');
     readImage(event.dataTransfer?.files?.[0], (dataUrl) => {
       state.person = dataUrl;
+      state.personIsDefault = false;
       paintPerson();
     });
   });
@@ -726,7 +733,7 @@ export function renderStudio(root, ctx, preset) {
   root.append(
     h('section', { class: 'page-head' }, [
       h('h1', { class: 'page-title', text: '搭配工作台' }),
-      h('p', { class: 'page-sub', text: '上传人物照，添加单品组合成一套，再一键试穿。' }),
+      h('p', { class: 'page-sub', text: '默认用内置模特，添加单品组合成一套，再一键试穿；也可以换成你自己的照片。' }),
     ]),
     h('div', { class: 'studio' }, [
       h('div', { class: 'studio__top' }, [
@@ -774,4 +781,12 @@ export function renderStudio(root, ctx, preset) {
   paintPerson();
   paint();
   paintResult();
+
+  // 内置模特：默认就把人物照填好，用户一进来就能直接点「开始试穿」。
+  void loadDefaultPerson().then((dataUrl) => {
+    if (!dataUrl || state.person || !root.isConnected) return;
+    state.person = dataUrl;
+    state.personIsDefault = true;
+    paintPerson();
+  });
 }

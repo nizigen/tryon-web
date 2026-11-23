@@ -1,0 +1,33 @@
+/**
+ * 内置模特图：新用户没有自己的全身照时，工作台与衣橱直接用它开箱即用。
+ * 服务端只接受 dataURL 形式的人物图，所以这里把静态 PNG 读成 dataURL 并缓存，
+ * 同一页面里多次调用只发一次请求。
+ */
+const DEFAULT_PERSON_URL = '/model/model-front.png';
+
+let cached = '';
+let inflight = null;
+
+export async function loadDefaultPerson() {
+  if (cached) return cached;
+  if (inflight) return inflight;
+  inflight = (async () => {
+    try {
+      const response = await fetch(DEFAULT_PERSON_URL, { cache: 'force-cache' });
+      if (!response.ok) return '';
+      const blob = await response.blob();
+      cached = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('读取内置模特图失败'));
+        reader.readAsDataURL(blob);
+      });
+      return cached;
+    } catch {
+      return '';
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}

@@ -252,3 +252,24 @@
 **错误与修正**
 - 工作台点「开始试穿」后读到 toast「图片编码、格式或内容无效」，一度以为是图片校验缺陷；抓网络层发现 `POST /api/orders` 实际 201、job success、结果图正常——那句是上一轮失败残留的 toast 文本（只 `hidden` 不 `textContent`），读 DOM 时误判。
 - `.picker__item` 的索引与衣橱列表顺序不一致（列表按 `createdAt` 倒序），按索引点会点错件；验收脚本改为按文案匹配。
+## 2025-11-23 · 内置模特：不传照片也能直接试穿
+
+**输入与决策**
+- 用户给出稿定作品链接，要求「去掉左上角水印，用这个正面照作为模特图」。
+- 取证后确认原图没有水印（残差、DOM、稿定自身文案三路），不做任何涂抹；改为从三视图里切出正面那一格。
+
+**变更**
+- 新增 `public/model/model-front.png`（337×956，206817 字节，sha256 `5da42398279fe5f3ad1d26de31964aa49e37921bcef816ed0293d36ced245c4c`）与 `public/lib/person.js`（`loadDefaultPerson()`：fetch 静态图 → dataURL，页面级缓存，失败返回空串）。
+- `public/views/studio.js`：`state.personIsDefault`；人物照按钮改为 `personBtn` 常量并在 `paintPerson()` 里改文案；进页面 `void loadDefaultPerson().then(...)` 预填；dropzone 标题与提示同步。
+- `public/views/wardrobe.js`：同样新增 `personIsDefault` 与 `paintPerson()`；今日穿搭「生成试穿图」在没照片时先尝试内置模特，再退回原来的「请先上传」提示。
+- `public/style-wardrobe.css`：`.stylist__person` 加 `flex-wrap`，新增 `.stylist__person-note`。
+- 文档：README（标题段、工作台能力、目录）、APP_FLOW（v4 变更两条）、PRD（P0 第 9 条 + 验收）、findings（新增第 14 节）。
+
+**验证**
+- `node --test` **127/127 pass**（3038ms）；`node --check` 对三个前端文件 exit 0；全仓 U+FFFD 0 命中。
+- `artifacts/probe-default-person.mjs`（CDP 无头）：工作台 `previewHidden:false / naturalWidth:337 / submitDisabled:true（还没选单品）/ 按钮「换成我的照片」`；衣橱 `naturalWidth:337 / note「当前用的是内置模特…」`。
+- `artifacts/probe-default-person-tryon.mjs`：不传照片，直接 `/#/tryon/shirt-floral` 点「开始试穿」→ `POST /api/orders` **201**、`slots:["top"]`、`priceCents:0`、约 25s success → 结果图 744×2114（`artifacts/test/default-person-result.png`，sha256 `2f181d2949ed0159e9a40343a1a05c61f9b81b493f20ff614f94b58a38539ff6`），目视确认模特换穿红底白花短袖衬衫、脸与站姿保持。
+
+**未验证**
+- 内置模特是真人风格照片，用于对外演示前需确认肖像来源合规（当前来自用户提供的稿定作品）。
+- 只验证了单件；多件与内置模特的组合未单独复测。

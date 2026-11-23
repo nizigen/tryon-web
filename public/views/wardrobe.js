@@ -1,6 +1,7 @@
 import { api, deviceId, getSessionId, setSessionId } from '../lib/api.js';
 import { createCascadeSelect, errorText, h, toast } from '../lib/dom.js';
 import { SLOTS, SLOT_BY_KEY } from '../lib/garment-taxonomy.js';
+import { loadDefaultPerson } from '../lib/person.js';
 
 const CASCADE_GROUPS = SLOTS.map((slot) => ({
   value: slot.key,
@@ -44,6 +45,7 @@ export function renderWardrobe(root, ctx) {
     suggestion: null,
     stylistBusy: false,
     person: null,
+    personIsDefault: false,
     order: null,
     job: null,
     poll: null,
@@ -71,6 +73,7 @@ export function renderWardrobe(root, ctx) {
   const personInput = h('input', { type: 'file', accept: IMAGE_TYPES.join(','), hidden: true });
   const personPreview = h('img', { class: 'stylist__person-preview', alt: '全身照预览', hidden: true });
   const personBtn = h('button', { type: 'button', class: 'btn btn--sm', text: '上传全身照' });
+  const personNote = h('p', { class: 'stylist__person-note', hidden: true });
   const orderBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '生成试穿图' });
   const orderStatus = h('p', { class: 'stylist__status', hidden: true });
   const resultEl = h('div', { class: 'stylist__result-img-wrap' });
@@ -393,6 +396,22 @@ export function renderWardrobe(root, ctx) {
     orderBtn.textContent = pending ? '生成中…' : '生成试穿图';
   }
 
+  /** 人物照的三种状态：没有 / 内置模特 / 用户自己的照片。 */
+  function paintPerson() {
+    if (state.person) {
+      personPreview.src = state.person;
+      personPreview.hidden = false;
+      personNote.hidden = false;
+      personNote.textContent = state.personIsDefault ? '内置模特' : '你的照片';
+      personBtn.textContent = state.personIsDefault ? '换成我的照片' : '更换全身照';
+    } else {
+      personPreview.hidden = true;
+      personNote.hidden = true;
+      personBtn.textContent = '上传全身照';
+    }
+    updateOrderButton();
+  }
+
   function stopPolling() {
     if (state.poll) clearInterval(state.poll);
     state.poll = null;
@@ -469,6 +488,14 @@ export function renderWardrobe(root, ctx) {
     if (pieces.length === 0) {
       toast('先让「帮我选」给出一套搭配');
       return;
+    }
+    if (!state.person) {
+      const fallback = await loadDefaultPerson();
+      if (fallback) {
+        state.person = fallback;
+        state.personIsDefault = true;
+        paintPerson();
+      }
     }
     if (!state.person) {
       toast('请先上传一张全身照，试穿需要真人照片');
@@ -549,9 +576,8 @@ export function renderWardrobe(root, ctx) {
     const reader = new FileReader();
     reader.onload = () => {
       state.person = String(reader.result);
-      personPreview.src = state.person;
-      personPreview.hidden = false;
-      personBtn.textContent = '更换全身照';
+      state.personIsDefault = false;
+      paintPerson();
       updateOrderButton();
     };
     reader.onerror = () => toast('读取图片失败，请重试');
@@ -583,7 +609,7 @@ export function renderWardrobe(root, ctx) {
       h('div', { class: 'inline-field' }, [requestInput, suggestBtn]),
       suggestionEl,
       h('div', { class: 'stylist__order' }, [
-        h('div', { class: 'stylist__person' }, [personBtn, personPreview, personInput]),
+        h('div', { class: 'stylist__person' }, [personBtn, personPreview, personNote, personInput]),
         h('span', { class: 'push-end' }, [orderBtn]),
       ]),
       orderStatus,
@@ -594,5 +620,14 @@ export function renderWardrobe(root, ctx) {
 
   paintGrid();
   paintSuggestion();
+  paintPerson();
   void loadItems();
+
+  // 内置模特：进页面就把全身照填好，用户不传照片也能直接生成试穿图。
+  void loadDefaultPerson().then((dataUrl) => {
+    if (!dataUrl || state.person || !root.isConnected) return;
+    state.person = dataUrl;
+    state.personIsDefault = true;
+    paintPerson();
+  });
 }
