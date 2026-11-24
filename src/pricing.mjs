@@ -8,6 +8,7 @@ import { HttpError } from './errors.mjs';
  */
 
 export const MODEL_LABELS = {
+  'comfyui/foxbaze-tryon': '工作流 · Qwen 试穿 LoRA（实验）',
   'codex/gpt-image-2.5': 'GPT Image 2.5',
   'codex/gpt-image-2': 'GPT Image 2',
   'workbuddy/hunyuan-image-alpha': '混元图像 Alpha',
@@ -16,6 +17,9 @@ export const MODEL_LABELS = {
 };
 
 const TIERS = {
+  'comfyui/foxbaze-tryon': [
+    { id: 'workflow', label: '工作流实验档 · 最多三件', quality: 'medium', size: '832x1248', priceCents: 0, costCents: 0 },
+  ],
   'minimax-code/MiniMax-Image': [
     { id: 'fast', label: '快档', quality: 'medium', size: '1024x1536', priceCents: 190, costCents: 30 },
   ],
@@ -70,6 +74,7 @@ export function priceCatalog(modelIds) {
   }));
   const cheapest = models
     .flatMap((model) => model.tiers.map((tier) => tier.priceCents))
+    .filter((price) => price > 0)
     .reduce((min, value) => (min === null || value < min ? value : min), null);
   const preferred = models.find((model) => model.id === 'codex/gpt-image-2.5')
     ?? models.find((model) => model.id === 'codex/gpt-image-2')

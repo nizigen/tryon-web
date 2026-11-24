@@ -3,7 +3,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { HttpError } from './errors.mjs';
-import { generateImage } from './imageapi.mjs';
+import { generateTryon } from './generation.mjs';
 
 const RESULT_TTL_MS = 24 * 60 * 60 * 1000;
 const JOB_RETENTION_MS = 30 * 60 * 1000;
@@ -65,7 +65,7 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
       const { model, prompt, person, garment, referenceImages, quality, size } = job.payload;
       // referenceImages 为多件穿搭提供的完整参考图数组；缺省时退回旧单件 [person, garment]。
       const images = Array.isArray(referenceImages) ? referenceImages : [person, garment];
-      const { mimeType, buffer } = await generateImage({
+      const { mimeType, buffer } = await generateTryon({
         model,
         prompt,
         referenceImages: images,

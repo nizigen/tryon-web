@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url';
 
 import { loadCookies } from './cookies.mjs';
 import { HttpError } from './errors.mjs';
-import { generateImage, listModels, deadline } from './imageapi.mjs';
-import { buildOutfitPrompt, buildTryonPrompt, CATEGORIES, FITS, GARMENT_TYPES, garmentTypeLabel, isCategory, isGarmentType, isSlot, orderPieces, sanitizeText, SLOTS, slotLabel } from './prompt.mjs';
+import { generateImage, deadline } from './imageapi.mjs';
+import { listGenerationModels as listModels, preflightGeneration } from './generation.mjs';
+import { checkWorkflow } from './comfyui.mjs';
+import { buildOutfitPrompt, buildTryonPrompt, CATEGORIES, FITS, GARMENT_TYPES, garmentTypeLabel, isCategory, isGarmentType, isSlot, normalizeLayer, orderPieces, sanitizeText, SLOTS, slotLabel } from './prompt.mjs';
 import { priceCatalog, resolveTier } from './pricing.mjs';
 import { assertString, decodeImage, MAX_BODY_BYTES, MAX_IMAGE_BYTES, MAX_PROMPT_CHARS, sniff } from './validate.mjs';
 
@@ -386,6 +388,7 @@ async function resolvePieces(context, rawPieces) {
       : assertString(raw.garmentType, 'garmentType', { max: 24 });
     const source = raw.source && typeof raw.source === 'object' ? raw.source : {};
     let dataUrl;
+    let layer = normalizeLayer(raw.layer);
     let name = '';
     let product = null;
     if (source.kind === 'product') {
@@ -418,10 +421,11 @@ async function resolvePieces(context, rawPieces) {
         throw new HttpError(400, 'PIECE_SLOT_MISMATCH', `这件单品是${slotLabel(stored.category)}，不能放进${slotLabel(slot)}`, 'pieces');
       }
       name = stored?.name ?? '';
+      layer = normalizeLayer(raw.layer ?? stored?.layer);
     } else {
       throw new HttpError(400, 'INVALID_REQUEST', '单品来源不合法', 'source');
     }
-    resolved.push({ slot, garmentType: garmentType || slotLabel(slot), name, dataUrl, product });
+    resolved.push({ slot, layer, garmentType: garmentType || slotLabel(slot), name, dataUrl, product });
   }
   const hasDress = resolved.some((piece) => piece.slot === 'dress');
   const hasTopOrBottom = resolved.some((piece) => piece.slot === 'top' || piece.slot === 'bottom');
@@ -486,6 +490,7 @@ async function handleOrderCreate(context) {
     pieces = await resolvePieces(context, input.pieces);
   }
 
+  await preflightGeneration(model, pieces, env, fetchImpl, clock.signal);
   const priceCents = demoMode ? 0 : tier.priceCents;
   const costCents = demoMode ? 0 : tier.costCents;
   const prompt = buildOutfitPrompt({ pieces, fit: input?.fit ?? 'regular', extra });
@@ -515,6 +520,7 @@ async function handleOrderCreate(context) {
       category,
       garmentType,
       slots,
+      pieces: pieces.map(({ slot, layer = 'auto', garmentType, name }) => ({ slot, layer, garmentType, name })),
       prompt,
       priceCents,
       costCents,
@@ -725,6 +731,7 @@ function wardrobeItemView(item) {
     name: item.name,
     category: item.category,
     subtype: item.subtype ?? '',
+    layer: normalizeLayer(item.layer),
     tags: item.tags ?? [],
     description: item.description ?? '',
     source: item.source,
@@ -822,7 +829,12 @@ async function handleLoginCancel(context) {
   response.end();
 }
 
+async function handleWorkflowStatus({ response, env, fetchImpl, clock }) {
+  sendJson(response, 200, await checkWorkflow(env, fetchImpl, clock.signal));
+}
+
 const ROUTES = [
+  { method: 'GET', pattern: /^\/api\/workflows\/status$/, handler: handleWorkflowStatus },
   { method: 'GET', pattern: /^\/api\/config$/, handler: handleConfig },
   { method: 'GET', pattern: /^\/api\/settings$/, handler: handleSettingsRead },
   { method: 'PATCH', pattern: /^\/api\/settings$/, handler: handleSettingsUpdate },

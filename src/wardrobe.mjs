@@ -10,6 +10,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 import { HttpError } from './errors.mjs';
+import { normalizeLayer } from './prompt.mjs';
 import { MAX_IMAGE_BYTES, decodeImage } from './validate.mjs';
 
 /** 契约第 1 节的七大单品类目（与今日穿搭的 slot 一致）。 */
@@ -104,7 +105,7 @@ export function createWardrobe({ dir = 'data', fetchImpl = fetch, env = process.
           items = [];
           return;
         }
-        items = parsed.items;
+        items = parsed.items.map((item) => ({ ...item, layer: normalizeLayer(item.layer) }));
       })().finally(() => {
         loading = null;
       });
@@ -202,6 +203,7 @@ export function createWardrobe({ dir = 'data', fetchImpl = fetch, env = process.
      */
     async add(input = {}) {
       const category = requireCategory(input.category);
+      const layer = normalizeLayer(input.layer);
       const image = await resolveImage(input);
       const { mime, buffer } = image;
 
@@ -224,6 +226,7 @@ export function createWardrobe({ dir = 'data', fetchImpl = fetch, env = process.
         id,
         name,
         category,
+        layer,
         subtype,
         tags,
         description,
@@ -273,7 +276,7 @@ export function createWardrobe({ dir = 'data', fetchImpl = fetch, env = process.
     },
 
     /**
-     * 修改一件单品的名称 / 类目 / 子类 / 标签 / 描述。图片不参与修改（换图请重新上传）。
+     * 修改一件单品的名称 / 类目 / 层级 / 子类 / 标签 / 描述。图片不参与修改（换图请重新上传）。
      * 只改传入的字段，其余保持原样；找不到返回 null。
      */
     async update(id, patch = {}) {
@@ -288,6 +291,7 @@ export function createWardrobe({ dir = 'data', fetchImpl = fetch, env = process.
           next.name = name;
         }
         if (patch.category !== undefined) next.category = requireCategory(patch.category);
+        if (patch.layer !== undefined) next.layer = normalizeLayer(patch.layer);
         if (patch.subtype !== undefined) next.subtype = cleanText(patch.subtype, 40);
         if (patch.tags !== undefined) next.tags = normalizeTags(patch.tags);
         if (patch.description !== undefined) next.description = cleanText(patch.description, 200);

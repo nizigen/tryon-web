@@ -226,3 +226,28 @@ test('索引被改成目录穿越的 imageFile 时不会读到目录外的文件
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('layer persists across upload, import, edit and reopening, old entries default to auto', async () => {
+  const dir = freshDir();
+  try {
+    const wardrobe = createWardrobe({ dir, sources: { async download() { return { mime: 'image/png', buffer: pngImage().buffer }; } } });
+    const basic = await wardrobe.add(sample());
+    assert.equal(basic.layer, 'auto');
+    const uploaded = await wardrobe.add(sample({ layer: 'outer' }));
+    const imported = await wardrobe.add({ sourceId: 'source', category: 'outer', layer: 'inner' });
+    assert.equal(uploaded.layer, 'outer');
+    assert.equal(imported.layer, 'inner');
+    assert.equal((await wardrobe.update(imported.id, { name: 'renamed' })).layer, 'inner');
+    assert.equal((await wardrobe.update(uploaded.id, { layer: 'middle' })).layer, 'middle');
+    assert.equal((await createWardrobe({ dir }).get(uploaded.id)).layer, 'middle');
+    assert.equal((await wardrobe.update(uploaded.id, { layer: 'auto' })).layer, 'auto');
+    for (const layer of [null, '', 'base', ' outer ', 1, {}]) {
+      await assert.rejects(wardrobe.add(sample({ layer })), error => error.status === 400 && error.field === 'layer');
+      await assert.rejects(wardrobe.update(uploaded.id, { layer }), error => error.status === 400 && error.field === 'layer');
+    }
+    const index = JSON.parse(readFileSync(join(dir, 'wardrobe.json'), 'utf8'));
+    delete index.items[0].layer;
+    writeFileSync(join(dir, 'wardrobe.json'), JSON.stringify(index));
+    assert.equal((await createWardrobe({ dir }).get(index.items[0].id)).layer, 'auto');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

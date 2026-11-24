@@ -1,5 +1,17 @@
 # findings — 研究、决策与证据
 
+## LoRA 核查与 W1–W3 选型（2026-11-24）
+
+复用 src/tryon.mjs 的订单任务/退款、src/imageapi.mjs 的deadline与图片字节校验、既有原生field/dialog/下拉。新增薄ComfyUI HTTP适配，不增SDK/依赖；模型项ID复用settings.model，不造第二份引擎设置。
+
+研究代理实际读取HF原始模型卡及JSON、GitHub官方源码：FoxBaze/Try_On_Qwen_Edit_Lora_Alpha revision `9ddcc92b6d5e85804055d25d97e841f9b4dfc869`（https://huggingface.co/FoxBaze/Try_On_Qwen_Edit_Lora_Alpha/tree/9ddcc92b6d5e85804055d25d97e841f9b4dfc869），原底座Qwen/Qwen-Image-Edit，非2509。其卡明确5件以上效果差；原图是人物+三服装拼图，TextEncodeQwenImageEdit单图，不是六张独立参考图。选该三件baseline以保留训练布局，不用2509 Plus假装无限多图；正向对齐指令为 Style the person in the top of the image, with every article of clothing on the bottom。原图30steps/cfg2.5/euler/simple/denoise1、shift3、CFGNorm1、LoRA1。不叠Lightning。KJ resize可用核心ImageScale的等尺寸stretch替代，避免额外节点依赖，质量差异待GPU验证。
+
+官方ComfyUI源码核查 commit `da8bd08e48deee74d9f6c3bc00aed365b00ec209`（https://github.com/Comfy-Org/ComfyUI/tree/da8bd08e48deee74d9f6c3bc00aed365b00ec209）：nodes_qwen.py里Plus仅image1/2/3，普通编码器单image；nodes_images.py的ImageStitch、nodes_post_processing.py缩放、nodes_model_advanced.py shift、nodes_cfg.py均核对输入。GGUF插件commit `6ea2651e7df66d7585f6ffee804b20e92fb38b8a`称内置LoRA加载实验支持，不能据此承诺实际显存或兼容。部署时object_info核查实际节点/输入/模型枚举，不仅检测端口。
+
+模型卡与底座声明Apache-2.0；ComfyUI本身GPL-3.0，GGUF插件Apache-2.0，整套并非单一Apache。只写适配图/接口，不拷贝其实现或再分发权重；部署须各自保留许可。未知：权重key匹配、GGUF精度、4090实际峰值/耗时、五件质量、真实人物保真；本轮不下载大权重/部署/付费探测。
+
+信任边界：地址/密钥/模型文件只读服务端env；浏览器只选固定工作流ID；拒绝重定向与路径穿越，history只读取本任务output节点；限字节、总超时、失败退款。ComfyUI会在远端落input/历史，不得沿用本应用人像不落盘承诺，须单列隐私与清理说明。
+
 ## 1. 平台形态：抖音小程序 + H5，不做原生 App（决策：2025-11-22）
 
 **依据（已核实来源）**

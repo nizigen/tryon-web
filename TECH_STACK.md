@@ -17,6 +17,10 @@
 | 视觉 / 对话 | OpenAI 兼容 `POST /v1/chat/completions` | 默认复用图片服务的地址与密钥，可用 `CHAT_API_BASE_URL` / `CHAT_API_KEY` 单独指向；衣橱描述 `CAPTION_MODEL`、今日选搭 `STYLIST_MODEL`，默认 `codex/gpt-6.1-sol`；失败降级不阻断主流程 |
 | 衣橱存储 | `data/wardrobe.json` + `data/wardrobe/<uuid>.<ext>` | 原子写、串行队列；检索用内置 BM25（中文按字 + 二元组），不引入向量库 |
 
+## ComfyUI 增量（2026-11-24）
+
+应用继续零依赖 Node v24.17.0（当前 Windows 实测）；ComfyUI API 为 GET /object_info、POST /upload/image、POST /prompt、GET /history/:id、GET /view。服务端环境 COMFYUI_BASE_URL / COMFYUI_API_KEY 提供连接；不从浏览器接收地址/凭据。工作流使用核心 ImageStitch / ImageScale 和原版 TextEncodeQwenImageEdit；具体版本、权重、许可证和未知显存记录在 docs/COMFYUI.md。GGUF 是可选实验部署，不能证明4090适配。应用不安装外部节点或下载权重。
+
 ## 模型目录（运行时动态发现）
 `GET /v1/models` → 取 `modalities.output` 含 `image` 的 `id`，再并入 `IMAGE_MODEL`（默认 `codex/gpt-image-2.5`）。
 **不能只按目录过滤**：本机实测 93 个模型里只有 `minimax-code/MiniMax-Image` 标了图片输出，默认模型 `codex/gpt-image-2.5` 根本不在目录里（指定它照样能出图），只按目录过滤会让默认模型凭空消失。用 `IMAGE_MODELS` 可以完全跳过目录请求。

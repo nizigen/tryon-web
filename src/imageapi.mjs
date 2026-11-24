@@ -62,7 +62,7 @@ async function readText(response, limit) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function readUpstream(response, limit, signal) {
+export async function readUpstream(response, limit, signal) {
   const invalid = new HttpError(502, 'UPSTREAM_FORMAT', '所选服务返回格式不兼容或图片超限');
   if (!response.ok) {
     // 把上游自己的错误原因带给用户：是网络不通、额度用尽还是模型不支持，只有它能说清。

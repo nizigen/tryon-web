@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { createApp } from '../src/app.mjs';
+import { WORKFLOW_ID, workflowGraph } from '../src/comfy-workflow.mjs';
 import { createSourceService } from '../src/source.mjs';
 import { createStore } from '../src/store.mjs';
 import { createTryonService } from '../src/tryon.mjs';
@@ -57,6 +58,47 @@ function makeFetch({ models = MODELS, fail = false, slowMs = 0, record = [] } = 
     }
     record.push({ prompt, reference_images: referenceImages });
     return jsonResponse({ created: 1, data: [{ b64_json: PNG, mime_type: 'image/png' }] });
+  };
+}
+
+function makeWorkflowFetch({ fail = false, record = { uploads: [], prompts: [], paths: [] } } = {}) {
+  const imageFetch = makeFetch();
+  const graph = workflowGraph({ images: ['person.png', 'garment.png'] });
+  const info = {};
+  for (const node of Object.values(graph)) {
+    info[node.class_type] ??= { input: { required: {} } };
+    for (const [key, value] of Object.entries(node.inputs)) {
+      info[node.class_type].input.required[key] = [Array.isArray(value) ? 'IMAGE' : typeof value === 'string' ? 'STRING' : typeof value === 'boolean' ? 'BOOLEAN' : 'FLOAT'];
+    }
+  }
+  return async (url, options) => {
+    const target = new URL(url);
+    if (target.origin !== 'http://comfy.test') return imageFetch(url, options);
+    record.paths.push(target.pathname);
+    if (target.pathname === '/object_info') return jsonResponse(info);
+    if (target.pathname === '/upload/image') {
+      assert.equal(options.method, 'POST');
+      assert.equal(options.body.get('type'), 'input');
+      assert.equal(options.body.get('overwrite'), 'false');
+      record.uploads.push(await toDataURL(options.body.get('image')));
+      return jsonResponse({ name: `upload-${record.uploads.length}.png`, subfolder: '', type: 'input' });
+    }
+    if (target.pathname === '/prompt') {
+      assert.equal(options.method, 'POST');
+      record.prompts.push(JSON.parse(options.body).prompt);
+      return jsonResponse({ prompt_id: 'workflow-test' });
+    }
+    if (target.pathname === '/history/workflow-test') {
+      return jsonResponse({ 'workflow-test': fail
+        ? { status: { status_str: 'error', completed: false } }
+        : { status: { status_str: 'success', completed: true }, outputs: { output: { images: [{ filename: 'generated.png', subfolder: '', type: 'output' }] } } } });
+    }
+    if (target.pathname === '/view') {
+      assert.equal(target.searchParams.get('filename'), 'generated.png');
+      assert.equal(target.searchParams.get('type'), 'output');
+      return new Response(Buffer.from(PNG, 'base64'), { headers: { 'content-type': 'image/png' } });
+    }
+    assert.fail(`Unexpected ComfyUI endpoint: ${target.pathname}`);
   };
 }
 
@@ -139,7 +181,7 @@ test('GET /api/config 返回模型目录、定价、分类与限制', async () =
   await withServer({}, async ({ call }) => {
     const response = await call('/api/config');
     assert.equal(response.status, 200);
-    assert.equal(response.payload.models.length, 2);
+    assert.deepEqual(response.payload.models.map(({ id }) => id), [...MODELS, WORKFLOW_ID]);
     assert.equal(response.payload.defaultModel, 'codex/gpt-image-2.5');
     assert.equal(response.payload.defaultTier, 'standard');
     assert.equal(response.payload.tryOnFromCents, 190);
@@ -651,7 +693,7 @@ test('GET/PATCH /api/settings 读写默认模型，下单未传 model 时使用�
     const initial = await call('/api/settings');
     assert.equal(initial.status, 200);
     assert.equal(initial.payload.model, 'codex/gpt-image-2.5');
-    assert.equal(initial.payload.models.length, 2);
+    assert.deepEqual(initial.payload.models.map(({ id }) => id), [...MODELS, WORKFLOW_ID]);
     assert.equal(initial.payload.demoMode, false);
     assert.equal(initial.payload.sources.jd, true);
     assert.equal(initial.payload.sources.douyin, true);
@@ -767,7 +809,7 @@ test('两件配饰与正好 5 件单品是允许的上限', async () => {
       body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON, pieces: five }),
     });
     assert.equal(created.status, 201);
-    assert.deepEqual(created.payload.order.slots, ['top', 'outer', 'bottom', 'accessory', 'accessory']);
+    assert.deepEqual(created.payload.order.slots, ['top', 'bottom', 'outer', 'accessory', 'accessory']);
     const job = await waitForJob(call, created.payload.jobId);
     assert.equal(job.status, 'success');
   });
@@ -801,5 +843,148 @@ test('下单中途失败会撤任务、订单置失败并全额退款', async ()
     assert.equal(orders[0].status, 'failed');
     await new Promise((resolve) => setTimeout(resolve, 120));
     assert.equal(record.length, 0, '撤掉的任务不得再调用上游');
+  });
+});
+
+test('工作流未配置时仍可选择模型，状态接口明确返回未就绪', async () => {
+  await withServer({}, async ({ call }) => {
+    const status = await call('/api/workflows/status');
+    assert.equal(status.status, 200);
+    assert.equal(status.payload.configured, false);
+    assert.equal(status.payload.ready, false);
+    const patched = await call('/api/settings', { method: 'PATCH', body: JSON.stringify({ model: WORKFLOW_ID }) });
+    assert.equal(patched.status, 200);
+    const settings = await call('/api/settings');
+    assert.equal(settings.payload.model, WORKFLOW_ID);
+    const workflow = settings.payload.models.find(({ id }) => id === WORKFLOW_ID);
+    assert.equal(workflow.tiers[0].id, 'workflow');
+    assert.equal(workflow.tiers[0].priceCents, 0);
+  });
+});
+
+test('工作流没地址时在占位扣费建单之前返回 503', async () => {
+  await withServer({}, async ({ call, store, tryon }) => {
+    const session = await createSession(call);
+    let reservations = 0;
+    let balanceChanges = 0;
+    const reserve = tryon.reserve;
+    const addBalance = store.addBalance;
+    tryon.reserve = (...args) => { reservations += 1; return reserve(...args); };
+    store.addBalance = (...args) => { balanceChanges += 1; return addBalance(...args); };
+    try {
+      const response = await call('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: WORKFLOW_ID, tier: 'workflow', person: PERSON }),
+      });
+      assert.equal(response.status, 503);
+      assert.equal(response.payload.error.code, 'WORKFLOW_UNAVAILABLE');
+      assert.equal(reservations, 0);
+      assert.equal(balanceChanges, 0);
+      assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+      assert.deepEqual(store.listOrders(session.sessionId), []);
+      assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
+    } finally {
+      tryon.reserve = reserve;
+      store.addBalance = addBalance;
+    }
+  });
+});
+
+test('工作流超过三件服装返回 400 WORKFLOW_PIECES', async () => {
+  await withServer({}, async ({ call, store, tryon }) => {
+    const session = await createSession(call);
+    const pieces = ['top', 'outer', 'bottom', 'shoes'].map((slot) => ({ slot, garmentType: slot, source: { kind: 'upload', image: PERSON } }));
+    const response = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: session.sessionId, model: WORKFLOW_ID, tier: 'workflow', person: PERSON, pieces }),
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.payload.error.code, 'WORKFLOW_PIECES');
+    assert.equal(response.payload.error.field, 'pieces');
+    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+    assert.deepEqual(store.listOrders(session.sessionId), []);
+    assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
+  });
+});
+
+test('工作流订单经上传、提交、历史和结果接口成功，零扣费且层级与图序一致', async () => {
+  const record = { uploads: [], prompts: [], paths: [] };
+  const image = (tag) => `data:image/png;base64,${Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(tag)]).toString('base64')}`;
+  const top = image('top');
+  const outer = image('outer');
+  const bottom = image('bottom');
+  await withServer({ env: { COMFYUI_BASE_URL: 'http://comfy.test' }, fetchImpl: makeWorkflowFetch({ record }) }, async ({ call, store, dir, base }) => {
+    const status = await call('/api/workflows/status');
+    assert.equal(status.status, 200);
+    assert.equal(status.payload.configured, true);
+    assert.equal(status.payload.ready, true);
+    const session = await createSession(call);
+    const created = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: session.sessionId, model: WORKFLOW_ID, tier: 'workflow', person: PERSON,
+        pieces: [
+          { slot: 'top', layer: 'outer', garmentType: '衬衫', source: { kind: 'upload', image: top } },
+          { slot: 'bottom', layer: 'middle', garmentType: '百褶裙', source: { kind: 'upload', image: bottom } },
+          { slot: 'outer', layer: 'inner', garmentType: '夹克', source: { kind: 'upload', image: outer } },
+        ],
+      }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.payload.priceCents, 0);
+    assert.equal(created.payload.balanceCents, session.balanceCents);
+    const job = await waitForJob(call, created.payload.jobId);
+    assert.equal(job.status, 'success');
+    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+    assert.deepEqual(record.uploads, [PERSON, outer, bottom, top]);
+    assert.equal(record.prompts.length, 1);
+    const graph = record.prompts[0];
+    assert.equal(graph.person.inputs.image, 'upload-1.png');
+    for (let index = 1; index <= 3; index += 1) assert.equal(graph[`garment_${index}`].inputs.image, `upload-${index + 1}.png`);
+    const expectedPieces = [['outer', 'inner'], ['bottom', 'middle'], ['top', 'outer']];
+    const persisted = store.getOrder(created.payload.orderId);
+    assert.deepEqual(persisted.pieces.map(({ slot, layer }) => [slot, layer]), expectedPieces);
+    for (const [index, [slot, layer]] of expectedPieces.entries()) {
+      assert.ok(persisted.prompt.includes(`reference image ${index + 2} (${slot}:`));
+      assert.ok(graph.positive.inputs.prompt.includes(`garment ${index + 1} in the bottom row (numbered from the left) (${slot}:`));
+      assert.match(graph.positive.inputs.prompt, new RegExp(`${slot}:.*${layer} layer`));
+    }
+    const detail = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(detail.payload.order.hasResult, true);
+    assert.deepEqual(detail.payload.order.pieces.map(({ slot, layer }) => [slot, layer]), expectedPieces);
+    const result = await fetch(`${base}/api/results/${detail.payload.order.resultFile}?k=${detail.payload.order.resultToken}`);
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await result.arrayBuffer()), Buffer.from(PNG, 'base64'));
+    const raw = await readFile(join(dir, 'state.json'), 'utf8');
+    assert.doesNotMatch(raw, /base64|"person"|"dataUrl"|"referenceImages"/);
+    const diskOrder = JSON.parse(raw).orders.find(({ id }) => id === created.payload.orderId);
+    assert.deepEqual(diskOrder.pieces.map(({ slot, layer }) => [slot, layer]), expectedPieces);
+    assert.equal(record.paths.filter((path) => path === '/upload/image').length, 4);
+    assert.ok(record.paths.includes('/prompt'));
+    assert.ok(record.paths.includes('/history/workflow-test'));
+    assert.ok(record.paths.includes('/view'));
+  });
+});
+
+test('工作流上游执行错误使任务订单失败，不扣费也不伪造结果', async () => {
+  const record = { uploads: [], prompts: [], paths: [] };
+  await withServer({ env: { COMFYUI_BASE_URL: 'http://comfy.test' }, fetchImpl: makeWorkflowFetch({ fail: true, record }) }, async ({ call, store }) => {
+    const session = await createSession(call);
+    const created = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: WORKFLOW_ID, tier: 'workflow', person: PERSON }),
+    });
+    assert.equal(created.status, 201);
+    const job = await waitForJob(call, created.payload.jobId);
+    assert.equal(job.status, 'failed');
+    assert.equal(job.error.code, 'WORKFLOW_FAILED');
+    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+    const detail = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(detail.payload.order.status, 'failed');
+    assert.equal(detail.payload.order.errorCode, 'WORKFLOW_FAILED');
+    assert.equal(detail.payload.order.hasResult, false);
+    assert.equal(detail.payload.order.resultToken, null);
+    assert.equal(record.paths.includes('/view'), false);
   });
 });

@@ -128,6 +128,12 @@ test('正式前端：原生 Chromium 真实 API 与交互回归', { skip: !chrom
 
     await t.test('移动端搭配条可查看和移除，整套交接保留单品信息与人物', async () => {
       await wardrobe(390);
+      await click(`${card(items[1])} [aria-haspopup="menu"]`);
+      await click('.action-menu:not([hidden]) button');
+      await ev('const select = document.querySelector("dialog[open] select:has(option[value=inner])"); select.value = "inner"; select.dispatchEvent(new Event("change", {bubbles:true}))');
+      await click('dialog[open] .modal__actions .btn--primary');
+      await waitFor(() => ev('!document.querySelector("dialog[open]")'), 'layer saved');
+      assert.equal((await call('/api/wardrobe')).payload.items.find(item => item.id === items[1].id).layer, 'inner');
       for (const item of items.slice(1, 3)) await click(`${card(item)} .wardrobe-card__thumb`);
       assert.equal(await ev('document.querySelectorAll(".wardrobe-card__thumb[aria-pressed=true]").length'), 2);
       assert.equal(await ev('document.querySelector(".wardrobe-mobile-actions .btn--primary").disabled'), false);
@@ -141,6 +147,7 @@ test('正式前端：原生 Chromium 真实 API 与交互回归', { skip: !chrom
       await waitFor(() => ev('document.querySelectorAll(".slot").length === 2'), 'studio preset');
       await waitFor(() => ev('document.querySelector(".dropzone__preview")?.naturalWidth > 0'), 'person');
       assert.equal(await ev('location.hash'), '#/studio');
+      assert.equal(await ev('document.querySelector(".slot select:has(option[value=inner])").value'), 'inner');
       assert.equal(await ev('[...document.querySelectorAll(".piece__name")].some(n => n.textContent.includes("黑色长裤"))'), true);
       assert.equal(await ev('[...document.querySelectorAll(".piece__thumb img")].every(i => i.getAttribute("src").startsWith("/api/wardrobe/"))'), true);
       assert.equal(await ev('document.querySelector(".studio__submit .btn").disabled'), false);
@@ -152,6 +159,7 @@ test('正式前端：原生 Chromium 真实 API 与交互回归', { skip: !chrom
       await click('.wardrobe-mobile-actions .btn--primary');
       await waitFor(() => ev('document.querySelectorAll(".slot").length === 2 && document.querySelector(".dropzone__preview")?.naturalWidth > 0'), 'generation inputs');
       assert.match(await ev('document.querySelector(".canvas__label")?.textContent || ""'), /原图/);
+      await ev('const select = document.querySelector(".slot select:has(option[value=inner])"); select.value = "outer"; select.dispatchEvent(new Event("change", {bubbles:true}))');
       await click('.studio__submit .btn');
       await waitFor(() => ev('Boolean(document.querySelector(".result a[download]"))'), 'generation result');
       assert.match(await ev('document.querySelector(".result .ai-note").textContent'), /AI 生成/);
@@ -163,6 +171,8 @@ test('正式前端：原生 Chromium 真实 API 与交互回归', { skip: !chrom
       assert.equal(values.length, 1);
       assert.equal(values[0].status, 'success');
       assert.equal(values[0].priceCents, 0);
+      assert.equal(values[0].pieces.find(piece => piece.slot === 'bottom').layer, 'outer');
+      assert.equal((await call('/api/wardrobe')).payload.items.find(item => item.id === items[1].id).layer, 'inner');
     });
 
     await t.test('工作台从衣橱选择使用原生弹窗，选中后返回对应条目', async () => {

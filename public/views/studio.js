@@ -4,12 +4,11 @@ import { createCascadeSelect, h, toast } from '../lib/dom.js';
 import { SLOTS, SLOT_BY_KEY, defaultSubtype } from '../lib/garment-taxonomy.js';
 import { icon } from '../lib/icons.js';
 import { loadDefaultPerson } from '../lib/person.js';
+import { createLayerSelect } from '../lib/wardrobe-dialogs.js';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PROMPT_CHARS = 500;
 const MAX_PIECES = 5;
-/** 1.5s 一轮，160 轮约 4 分钟：比单次生成的最长等待略长，避免提前放弃。 */
-const POLL_MAX_TICKS = 160;
 /** 服务端 MAX_BODY_BYTES = 24MiB；这里按 dataURL 字符数留 10% 余量做前端预判。 */
 const MAX_PAYLOAD_CHARS = Math.floor(24 * 1024 * 1024 * 0.9);
 
@@ -85,12 +84,12 @@ export function renderStudio(root, ctx, preset) {
   /** 默认一个「上衣」条目；preset 进来时替换成被预填的那一件。 */
   /** 衣橱多选带进来的整套单品；单人深链接仍按单件 preset 处理。 */
   function createPieces(seed) {
-    const first = { slot: 'top', subtype: '', source: null };
+    const first = { slot: 'top', subtype: '', layer: 'auto', source: null };
     const list = Array.isArray(seed) ? seed : seed ? [seed] : [];
     const pieces = list
       .filter((piece) => piece && SLOT_BY_KEY[piece.slot])
       .slice(0, MAX_PIECES)
-      .map((piece) => ({ slot: piece.slot, subtype: piece.subtype || '', source: piece.source ?? null }));
+      .map((piece) => ({ slot: piece.slot, subtype: piece.subtype || '', layer: piece.layer ?? 'auto', source: piece.source ?? null }));
     return pieces.length ? pieces : [first];
   }
 
@@ -100,6 +99,7 @@ export function renderStudio(root, ctx, preset) {
       .map((piece) => ({
         slot: piece.slot,
         garmentType: piece.subtype || defaultSubtype(piece.slot),
+        layer: piece.layer ?? 'auto',
         source: piece.source,
       }));
   }
@@ -222,6 +222,7 @@ export function renderStudio(root, ctx, preset) {
     const def = SLOT_BY_KEY[item.category];
     piece.slot = def ? def.key : 'top';
     piece.subtype = def?.subtypes.includes(item.subtype) ? item.subtype : '';
+    piece.layer = item.layer ?? 'auto';
     piece.source = {
       kind: 'wardrobe',
       wardrobeId: item.id,
@@ -392,8 +393,13 @@ export function renderStudio(root, ctx, preset) {
       fileInput.value = '';
     });
 
+    const layerSelect = createLayerSelect(piece.layer ?? 'auto');
+    layerSelect.id = `piece-layer-${index}`;
+    layerSelect.setAttribute('aria-label', `第 ${index + 1} 个单品的穿着层级`);
+    layerSelect.addEventListener('change', () => { piece.layer = layerSelect.value; });
     const editor = h('div', { class: 'piece-editor' }, [
       cascade.el,
+      h('div', { class: 'field' }, [h('label', { class: 'field__label', for: layerSelect.id, text: '穿着层级' }), layerSelect]),
       h('div', { class: 'inline-field' }, [
         h('button', {
           type: 'button',
@@ -557,7 +563,7 @@ export function renderStudio(root, ctx, preset) {
           h('span', { class: 'spinner' }),
           h('span', { text: STAGE_TEXT[state.job?.stage] ?? STAGE_TEXT.generating }),
         ]),
-        h('p', { class: 'result__meta', text: '生成通常需要 20–60 秒，请不要关闭页面。' }),
+        h('p', { class: 'result__meta', text: '生成时间取决于模型与工作流，可能需要数分钟，请保持页面打开。' }),
       );
       return;
     }
@@ -616,19 +622,13 @@ export function renderStudio(root, ctx, preset) {
 
   function pollJob(jobId) {
     stopPolling();
-    let ticks = 0;
     state.poll = setInterval(async () => {
       // 用户切走页面后 root 会从文档里摘掉：不停下来就会一直轮询到进程退出。
       if (!root.isConnected) {
         stopPolling();
         return;
       }
-      ticks += 1;
-      if (ticks > POLL_MAX_TICKS) {
-        stopPolling();
-        toast('等待超时，结果可能仍在生成，可稍后在“订单与说明”查看');
-        return;
-      }
+      // 队列等待和生成超时由后端负责；页面跟随实际终态，避免提前放弃长工作流。
       try {
         const payload = await api(`/api/jobs/${jobId}`);
         state.job = payload;
@@ -747,7 +747,7 @@ export function renderStudio(root, ctx, preset) {
 
   addBtn.addEventListener('click', () => {
     if (state.pieces.length >= MAX_PIECES) return;
-    state.pieces.push({ slot: '', subtype: '', source: null });
+    state.pieces.push({ slot: '', subtype: '', layer: 'auto', source: null });
     paint();
   });
 

@@ -479,3 +479,20 @@ ode --test\ 137/137 通过。
 - 演示服务 `DEMO_MODE=1` 起在 43130（后台 job `pwsh-e0c40e5074834071`），`GET /api/config` 200，`demoMode:true reachable:true`。
 - OpenCLI 实跑（`--session tryon`）：工作台、衣橱、设置、记录四页；衣橱 **16 张卡**、点选后出现「已选 1 / 5 件」操作条、点「去试穿这一套」跳到 `#/studio` 且单品带入；1440/768/390 三档 `scrollWidth <= innerWidth` 无横向溢出；`console --level error` **0 条**。截图 `artifacts/shots/live-*.png`（git-ignored）。
 - 未验：真实付费上游生成、扫码登录、四平台解析、物理手机——与上一轮同一批边界，本轮未扩大范围。
+
+## 2026-11-24 · 叠穿层次 + ComfyUI 试穿 LoRA 接入基础
+
+**输入与决策**：用户要求理清 LoRA 方案与接入代码、加衣服时设置内外层并进入提示词、模型设置里增加工作流选项、先把基础搭好（4090 由用户之后租用）。研究代理实际读取 HF 模型卡原版 Qwen-Image-Edit（非 2509）与作者工作流、官方 ComfyUI/GGUF 源码，结论与不确定项见 findings.md 顶部。未下载权重、未部署、无 GPU 真实出图。
+
+**变更**
+- 领域层：`src/prompt.mjs` 新增 `normalizeLayer/effectiveLayer`，`orderPieces` 按有效层→格子→原序稳定排序；提示词逐件写明「穿在哪些内层参考图之外」，取消固定上衣贴肤与外套露领口的旧规则。`src/wardrobe.mjs` 上传/导入/编辑持久化 `layer`，旧条目缺字段默认 `auto`。
+- 后端：新增 `src/comfyui.mjs`（零依赖 HTTP 适配：只读预检 object_info、上传、提交、轮询自己的 history、只取固定 output 节点、限字节、总超时只删自己队列）、`src/comfy-workflow.mjs`（原版 LoRA 拼图 API 图生成，core 节点替代 KJ resize）、`src/generation.mjs`（模型目录并入工作流 ID、下单前预检）、`scripts/comfyui.mjs`（`--check` / `--export`）。`src/app.mjs` 接入目录/设置/下单预检与 `GET /api/workflows/status`；`src/pricing.mjs` 新增零价实验档。
+- 前端：上传/导入/编辑弹窗与工作台逐件增加原生层级下拉；设置页出现「ComfyUI 工作流（实验）」卡片与检查按钮；两页轮询改为跟随任务真实终态（后端 deadline 为权威，离开页面停止）。
+- 文档：新增 `docs/COMFYUI.md`（权重清单、SSH 隧道、`.env`、检查/导出、验收顺序、远端隐私与清理）；README、六规范、`.env.example` 同步。
+
+**验证**
+- `node --test`（`TRYON_TEST_CHROME` 指向本机 Chrome）：**183/183 pass，0 fail，0 skipped**，含既有真实 Chromium 回归、真实 HTTP 假 ComfyUI 全协议、层次落盘与前端保存/继承/覆盖。
+- 独立只读审查：发现「Reference images 2-N 范围改写损坏」与「前端固定 16 分钟轮询短于后端可配超时」两项 P2，均已修复并补断言；上传返回非空 subfolder 时在提交前 502 拒绝。复审最终版无阻断项。
+- 真实服务（43130 演示模式）`/api/config` 模型目录含 `comfyui/foxbaze-tryon`；`/api/workflows/status` 未配置时如实返回 `configured:false ready:false`；设置页渲染工作流卡片与检查按钮；`scripts/comfyui.mjs --export` 成功导出 API 图，`--check` 未配置时退出 1。
+
+**未验（明确边界）**：4090/ComfyUI 真实出图、显存峰值与耗时、两三件真人保真度、GGUF 精度与 LoRA 兼容、海外实例路由；本轮没有部署、下载权重或付费探测。远端 ComfyUI 会保留上传与历史，与应用「人像不落盘」承诺不同，手册已单列。

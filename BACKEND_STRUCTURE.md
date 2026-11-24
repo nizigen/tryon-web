@@ -20,6 +20,14 @@ src/validate.mjs      图片/字段校验与限额
 src/errors.mjs        统一错误类型
 ```
 
+## ComfyUI 与分层契约（2026-11-24）
+
+- 衣橱与订单 pieces 新增 layer enum auto/inner/middle/outer；非法值400，旧数据视为auto。auto 依品类推导有效层；先层后 SLOT_ORDER 排列并共用于图和提示词。
+- 模型目录增加 comfyui/foxbaze-tryon；它复用 settings.model 和原订单链路，最多三件服装，固定标准实验档零应用费用（租卡成本由环境持有者承担，未估价）。
+- GET /api/workflows/status 只读配置与 /object_info，返回 configured/ready/message，不回地址、密钥或文件路径；下单时同样先预检再占位扣费。
+- ComfyUI adapter 只连环境配置的根地址，拒绝重定向，限响应体/输出大小，单任务独立prompt_id，失败/超时走原退款。工作流等待默认900秒（可设 COMFYUI_TIMEOUT_MS），普通API仍120秒。超时仅尝试从queue删除当前prompt，不中断其它任务；无法保证远端已停止。
+- 人像上传后会暂存在ComfyUI input目录及历史，区别于本应用内存；4090管理员必须按手册清理专用实例输入/历史。本应用不声称远端不落盘。
+
 ## 数据模型
 
 **商品**（只读目录 `data/catalog.json`）

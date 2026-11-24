@@ -44,7 +44,7 @@ export function renderSettings(root, ctx) {
       ]));
       return;
     }
-    body.append(modelCard(settings), gatewayCard(settings), cookiesCard(settings), demoCard(settings));
+    body.append(modelCard(settings), workflowCard(), gatewayCard(settings), cookiesCard(settings), demoCard(settings));
   }
 
   function modelCard(settings) {
@@ -77,6 +77,26 @@ export function renderSettings(root, ctx) {
       toast(error.message);
       paint();
     }
+  }
+
+  function workflowCard() {
+    const status = h('p', { class: 'field__hint', role: 'status', text: '4090 就绪后配置 ComfyUI，点击检查节点与模型文件。' });
+    const button = h('button', { type: 'button', class: 'btn', text: '检查工作流连接' });
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true; status.textContent = '正在检查…';
+      try {
+        const result = await api('/api/workflows/status');
+        status.textContent = result.message;
+      } catch (error) { status.textContent = errorText(error); }
+      finally { button.disabled = false; }
+    });
+    return h('section', { class: 'card' }, [
+      h('h2', { class: 'section__title', text: 'ComfyUI 工作流（实验）' }),
+      h('p', { class: 'field__hint', text: '在上方图像模型中选择「工作流 · Qwen 试穿 LoRA」。原版 LoRA 基线最多三件服装；显存、速度与效果需在租用 GPU 后验证。应用不扣试穿余额，租卡费用另计。' }),
+      button, status,
+      h('p', { class: 'field__hint', text: '工作流会把照片上传到你的 ComfyUI 实例，远端会临时保存输入与任务历史，请使用可信实例并按运行手册清理。连接检查不会出图。' }),
+    ]);
   }
 
   function gatewayCard(settings) {

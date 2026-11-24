@@ -6,6 +6,8 @@
  * 光影与褶皱自然（去 AI 味）→ 严格约束 → 禁止合成感 → 输出前自检。
  */
 
+import { HttpError } from './errors.mjs';
+
 export const CATEGORIES = [
   { id: 'tops', label: '上衣' },
   { id: 'bottoms', label: '下装' },
@@ -192,7 +194,7 @@ export function buildTryonPrompt({ category, garmentType, garmentName = '', fit 
  * `accessory` 是唯一可多选的格子，最多 2 件；其余格子同一时间最多一件。
  */
 export const SLOTS = [
-  { key: 'top', label: '上衣（内搭）', max: 1 },
+  { key: 'top', label: '上衣', max: 1 },
   { key: 'outer', label: '外套', max: 1 },
   { key: 'bottom', label: '下装', max: 1 },
   { key: 'dress', label: '连衣裙', max: 1 },
@@ -201,7 +203,7 @@ export const SLOTS = [
   { key: 'accessory', label: '配饰', max: 2 },
 ];
 
-/** 参考图与提示词的排列顺序：从内到外、从上到下。人物固定在 reference image 1。 */
+/** 同层内的格子顺序；参考图先按有效层级排序，人物固定在 reference image 1。 */
 export const SLOT_ORDER = ['top', 'outer', 'bottom', 'dress', 'hosiery', 'shoes', 'accessory'];
 
 export function isSlot(slot) {
@@ -212,11 +214,28 @@ export function slotLabel(slot) {
   return SLOTS.find((item) => item.key === slot)?.label ?? slot;
 }
 
-/** 按 SLOT_ORDER 稳定排序：同一格子内（accessory）保持用户选择顺序。 */
+const LAYER_ORDER = ['inner', 'middle', 'outer'];
+const DEFAULT_LAYER = { top: 'middle', bottom: 'middle', dress: 'middle', hosiery: 'inner', outer: 'outer', shoes: 'outer', accessory: 'outer' };
+
+export function normalizeLayer(value = 'auto') {
+  if (!['auto', ...LAYER_ORDER].includes(value)) {
+    throw new HttpError(400, 'INVALID_REQUEST', '穿着层级无效', 'layer');
+  }
+  return value;
+}
+
+export function effectiveLayer(piece) {
+  const layer = normalizeLayer(piece.layer);
+  return layer === 'auto' ? DEFAULT_LAYER[piece.slot] : layer;
+}
+
+/** 按有效层级、格子顺序稳定排序；同格子保持用户选择顺序。 */
 export function orderPieces(pieces) {
   return pieces
     .map((piece, index) => ({ piece, index }))
     .sort((a, b) => {
+      const layerDifference = LAYER_ORDER.indexOf(effectiveLayer(a.piece)) - LAYER_ORDER.indexOf(effectiveLayer(b.piece));
+      if (layerDifference) return layerDifference;
       const sa = SLOT_ORDER.indexOf(a.piece.slot);
       const sb = SLOT_ORDER.indexOf(b.piece.slot);
       if (sa !== sb) return sa - sb;
@@ -226,8 +245,8 @@ export function orderPieces(pieces) {
 }
 
 const SLOT_INSTRUCTIONS = {
-  top: 'a fitted upper-body top worn closest to the skin; tuck it into the bottoms or let it fall naturally according to its style',
-  outer: 'the outer layer worn over the top; keep the inner top visible (open or half-open front) and do not cover the neckline or hem of the inner top',
+  top: 'an upper-body top; tuck it into the bottoms or let it fall naturally according to its style and assigned layer',
+  outer: 'an upper-body jacket or coat; follow its assigned layer and product cut, with natural coverage and closure',
   bottom: 'the lower-body item worn on the waist and legs, with its waistband at the natural waist and its hem or leg opening where the product photo shows',
   dress: 'a one-piece dress covering the torso and legs continuously, neckline at the neck, waistline at the natural waist and skirt at the length shown',
   hosiery: 'tights or stockings covering the legs with the colour and thickness of the named item; they must not cover the shoe surface',
@@ -237,16 +256,15 @@ const SLOT_INSTRUCTIONS = {
 
 /**
  * 多件穿搭提示词（见 OUTFIT_MODEL.md 第 5 节）。
- * 参考图顺序固定为：人物 = reference image 1，各件按 SLOT_ORDER 依次为 2、3、4……，
+ * 参考图顺序：人物 = reference image 1，各件按 orderPieces 依次为 2、3、4……，
  * 并在分层说明里写明对应的 `reference image N`。
  * @param {object} input
- * @param {Array<{slot:string, garmentType?:string, name?:string}>} input.pieces
+ * @param {Array<{slot:string, layer?:'auto'|'inner'|'middle'|'outer', garmentType?:string, name?:string}>} input.pieces
  * @param {string} [input.fit]
  * @param {string} [input.extra]
  */
 export function buildOutfitPrompt({ pieces = [], fit = 'regular', extra = '' }) {
   const ordered = orderPieces(pieces);
-  const hasHosiery = ordered.some((piece) => piece.slot === 'hosiery');
   const fitHint = FITS.find((item) => item.id === fit)?.hint ?? FITS[0].hint;
   const userRequest = sanitizeText(extra, 500);
   const lastRef = ordered.length + 1;
@@ -261,11 +279,14 @@ export function buildOutfitPrompt({ pieces = [], fit = 'regular', extra = '' }) 
   const layerLines = ordered.map((piece, index) => {
     const ref = index + 2;
     const type = sanitizeText(piece.garmentType ?? '', 24);
-    let instruction = SLOT_INSTRUCTIONS[piece.slot] ?? '';
-    if (piece.slot === 'bottom' && hasHosiery) {
-      instruction += '; the legs wear the hosiery first and then the bottoms, so the hosiery texture and colour show below the skirt hem or trouser cuff';
-    }
-    return `- reference image ${ref} (${piece.slot}${type ? ': ' + type : ''}): ${instruction}.`;
+    const instruction = SLOT_INSTRUCTIONS[piece.slot] ?? '';
+    const layer = effectiveLayer(piece);
+    const innerReferences = ordered.flatMap((other, otherIndex) =>
+      LAYER_ORDER.indexOf(effectiveLayer(other)) < LAYER_ORDER.indexOf(layer) ? [`reference image ${otherIndex + 2}`] : []);
+    const relation = innerReferences.length
+      ? `wear outside ${innerReferences.join(', ')} wherever their body regions overlap`
+      : 'no selected reference is assigned to a layer underneath this item';
+    return `- reference image ${ref} (${piece.slot}${type ? ': ' + type : ''}): ${layer} layer; ${relation}; ${instruction}.`;
   });
 
   const inputHeader = ordered.length === 1
@@ -287,6 +308,8 @@ export function buildOutfitPrompt({ pieces = [], fit = 'regular', extra = '' }) 
     'LAYERING (from inner to outer, top to bottom):',
     ...layerLines,
     '- combine all the pieces above at the same time on the same person; never drop a selected piece',
+    '- layer assignments control overlap; pieces in the same layer share that level and their reference order does not impose extra layering',
+    '- allow natural occlusion according to each product cut; do not force inner necklines or hems to remain visible',
     'PRESERVE EXACTLY (from reference image 1):',
     '- face, facial features, expression, skin tone and skin texture, hair style and hair strands',
     '- body shape, proportions, pose, hand and finger positions',

@@ -10,7 +10,6 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PIECES = 5;
 const POLL_INTERVAL = 1500;
-const POLL_MAX_TICKS = 160; // 约 4 分钟
 
 const STAGE_TEXT = {
   queued: '排队中，马上轮到你',
@@ -50,7 +49,6 @@ export function renderWardrobe(root, ctx) {
     order: null,
     job: null,
     poll: null,
-    pollTicks: 0,
   };
 
   const fileInput = h('input', { type: 'file', accept: IMAGE_TYPES.join(','), hidden: true });
@@ -146,7 +144,7 @@ export function renderWardrobe(root, ctx) {
     return state.selection
       .map((id) => itemById(id))
       .filter(Boolean)
-      .map((item) => ({ slot: item.category, subtype: item.subtype || '', source: { kind: 'wardrobe', wardrobeId: item.id, imageUrl: thumbSrc(item), name: item.name || '' } }));
+      .map((item) => ({ slot: item.category, subtype: item.subtype || '', layer: item.layer ?? 'auto', source: { kind: 'wardrobe', wardrobeId: item.id, imageUrl: thumbSrc(item), name: item.name || '' } }));
   }
 
   function paintSelection() {
@@ -342,7 +340,7 @@ export function renderWardrobe(root, ctx) {
     for (const [key, value] of Object.entries(slots)) {
       const list = Array.isArray(value) ? value : value ? [value] : [];
       for (const item of list) {
-        if (item?.id) pieces.push({ slot: key, subtype: item.subtype || '', source: { kind: 'wardrobe', wardrobeId: item.id } });
+        if (item?.id) pieces.push({ slot: key, subtype: item.subtype || '', layer: item.layer ?? itemById(item.id)?.layer ?? 'auto', source: { kind: 'wardrobe', wardrobeId: item.id } });
       }
     }
     return pieces;
@@ -448,7 +446,7 @@ export function renderWardrobe(root, ctx) {
     if (order?.status === 'pending') {
       resultEl.append(
         h('div', { class: 'stage' }, [h('span', { class: 'spinner' }), h('span', { text: STAGE_TEXT[state.job?.stage] ?? STAGE_TEXT.generating })]),
-        h('p', { class: 'result__meta', text: '生成通常需要 20–60 秒，请不要关闭页面。' }),
+        h('p', { class: 'result__meta', text: '生成时间取决于模型与工作流，可能需要数分钟，请保持页面打开。' }),
       );
       return;
     }
@@ -463,20 +461,12 @@ export function renderWardrobe(root, ctx) {
 
   function pollJob(jobId) {
     stopPolling();
-    state.pollTicks = 0;
     state.poll = setInterval(async () => {
       if (!root.isConnected) {
         stopPolling();
         return;
       }
-      state.pollTicks += 1;
-      if (state.pollTicks > POLL_MAX_TICKS) {
-        stopPolling();
-        state.stylistBusy = false;
-        setStatus('生成超时，请稍后在「试穿记录」查看结果。');
-        updateOrderButton();
-        return;
-      }
+      // 排队等待与生成 deadline 由后端控制，页面持续追踪真实终态。
       try {
         const payload = await api(`/api/jobs/${jobId}`);
         state.job = payload;

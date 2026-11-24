@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildOutfitPrompt, buildTryonPrompt, GARMENT_TYPES, isCategory, isGarmentType } from '../src/prompt.mjs';
+import * as prompts from '../src/prompt.mjs';
+import { HttpError } from '../src/errors.mjs';
 
 test('分类白名单只有上衣、下装、连衣裙', () => {
   assert.equal(isCategory('tops'), true);
@@ -86,7 +88,7 @@ test('版型选择进入提示词', () => {
   assert.match(prompt, /worn slightly oversized/);
 });
 
-test('多件穿搭提示词分层且参考图编号按 top→outer→bottom→hosiery 排列', () => {
+test('多件穿搭提示词分层且参考图编号按有效内中外层排列', () => {
   const prompt = buildOutfitPrompt({
     pieces: [
       { slot: 'bottom', garmentType: '百褶裙' },
@@ -96,12 +98,12 @@ test('多件穿搭提示词分层且参考图编号按 top→outer→bottom→ho
     ],
   });
   assert.match(prompt, /LAYERING \(from inner to outer, top to bottom\)/);
-  assert.match(prompt, /reference image 2 = top/);
-  assert.match(prompt, /reference image 3 = outer/);
+  assert.match(prompt, /reference image 2 = hosiery/);
+  assert.match(prompt, /reference image 3 = top/);
   assert.match(prompt, /reference image 4 = bottom/);
-  assert.match(prompt, /reference image 5 = hosiery/);
-  assert.match(prompt, /keep the inner top visible/);
-  assert.match(prompt, /hosiery texture and colour show below/);
+  assert.match(prompt, /reference image 5 = outer/);
+  assert.match(prompt, /reference image 5 .*outside reference image 2, reference image 3, reference image 4/);
+  assert.doesNotMatch(prompt, /closest to the skin|keep the inner top visible|do not cover the neckline or hem/);
   assert.match(prompt, /must not cover the shoe surface/);
 });
 
@@ -109,4 +111,29 @@ test('连衣裙在提示词里用一件式描述', () => {
   const prompt = buildOutfitPrompt({ pieces: [{ slot: 'dress', garmentType: '吊带裙' }] });
   assert.match(prompt, /reference image 2 = dress/);
   assert.match(prompt, /one-piece dress/);
+});
+
+test('layer validation, automatic mapping and explicit overrides', () => {
+  assert.equal(prompts.normalizeLayer(), 'auto');
+  for (const layer of ['auto', 'inner', 'middle', 'outer']) assert.equal(prompts.normalizeLayer(layer), layer);
+  for (const value of [null, '', 'INNER', ' inner ', 'base', 1, {}, []]) {
+    assert.throws(() => prompts.normalizeLayer(value), error => error instanceof HttpError && error.status === 400 && error.field === 'layer');
+  }
+  for (const [slot, layer] of Object.entries({ top: 'middle', bottom: 'middle', dress: 'middle', hosiery: 'inner', outer: 'outer', shoes: 'outer', accessory: 'outer' })) {
+    assert.equal(prompts.effectiveLayer({ slot }), layer);
+    assert.equal(prompts.effectiveLayer({ slot, layer: 'auto' }), layer);
+    assert.equal(prompts.effectiveLayer({ slot, layer: 'inner' }), 'inner');
+  }
+});
+
+test('layer sorting is stable and prompt reference numbers follow it', () => {
+  const pieces = [{ slot: 'accessory', name: 'a', layer: 'middle' }, { slot: 'top', layer: 'outer' }, { slot: 'outer', layer: 'inner' }, { slot: 'accessory', name: 'b', layer: 'middle' }, { slot: 'hosiery' }, { slot: 'bottom' }];
+  const before = structuredClone(pieces);
+  assert.deepEqual(prompts.orderPieces(pieces), [pieces[2], pieces[4], pieces[5], pieces[0], pieces[3], pieces[1]]);
+  assert.deepEqual(pieces, before);
+  const prompt = buildOutfitPrompt({ pieces });
+  assert.match(prompt, /reference image 2 = outer/);
+  assert.match(prompt, /reference image 7 = top/);
+  assert.match(prompt, /reference image 7 .*outside reference image 2, reference image 3, reference image 4, reference image 5, reference image 6/);
+  assert.doesNotMatch(prompt, /closest to the skin|keep the inner top visible|hosiery first and then the bottoms/);
 });

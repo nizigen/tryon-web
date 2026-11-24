@@ -24,9 +24,21 @@ function title(text, close) {
   ]);
 }
 
+export function createLayerSelect(value = 'auto') {
+  const select = h('select', {}, [
+    h('option', { value: 'auto', text: '自动（按类目）' }),
+    h('option', { value: 'inner', text: '内层' }),
+    h('option', { value: 'middle', text: '中层' }),
+    h('option', { value: 'outer', text: '外层' }),
+  ]);
+  select.value = value;
+  return select;
+}
+
 export function createWardrobeDialogs({ host, onSaved }) {
   function openItem({ item, dataUrl, filename }) {
     const editing = Boolean(item);
+    const layerInput = createLayerSelect(item?.layer ?? 'auto');
     const nameInput = h('input', { type: 'text', maxlength: '40', value: editing ? item.name : String(filename || '').replace(/\.[^.]+$/, '').slice(0, 40), placeholder: '给这件单品起个名字' });
     const cascade = createCascadeSelect({ groups: GROUPS, value: SLOT_BY_KEY[item?.category] ? item.category : 'top', subValue: item?.subtype || '', ariaLabel: '单品类目', subPlaceholder: '选择子类' });
     const error = h('p', { class: 'error-text', role: 'alert', hidden: true });
@@ -39,7 +51,7 @@ export function createWardrobeDialogs({ host, onSaved }) {
       title(editing ? '编辑单品' : '加入衣橱', close),
       h('div', { class: 'modal__content' }, [
         h('div', { class: 'modal__preview' }, [h('img', { src: dataUrl || item?.imageUrl || `/api/wardrobe/${encodeURIComponent(item?.id || '')}/image`, alt: item?.name || '待上传单品' })]),
-        field('单品名称', nameInput), categoryField(cascade), error,
+        field('单品名称', nameInput), categoryField(cascade), field('穿着层级', layerInput), error,
       ]),
       h('div', { class: 'modal__actions' }, [cancel, save]),
     ]);
@@ -50,7 +62,7 @@ export function createWardrobeDialogs({ host, onSaved }) {
       if (!name) { error.textContent = '请填写单品名称'; error.hidden = false; nameInput.focus(); return; }
       busy = true; save.disabled = true; cancel.disabled = true; save.textContent = editing ? '保存中…' : '上传中…'; error.hidden = true;
       try {
-        const body = { name, category: cascade.getValue(), subtype: cascade.getSubValue() };
+        const body = { name, category: cascade.getValue(), subtype: cascade.getSubValue(), layer: layerInput.value };
         const saved = await api(editing ? `/api/wardrobe/${encodeURIComponent(item.id)}` : '/api/wardrobe', {
           method: editing ? 'PATCH' : 'POST',
           body: editing ? body : { ...body, tags: [], description: '', image: dataUrl, source: 'upload' },
@@ -97,13 +109,14 @@ export function createWardrobeDialogs({ host, onSaved }) {
 
   function openImportModal() {
     const state = { source: null, selected: -1, parsing: false, saving: false };
+    const layerInput = createLayerSelect();
     const urlInput = h('textarea', { rows: '3', placeholder: '粘贴单个商品的链接或整段分享文案' });
     const parse = h('button', { type: 'button', class: 'btn', text: '解析商品图', disabled: true });
     const nameInput = h('input', { type: 'text', maxlength: '40', placeholder: '给这件单品起个名字' });
     const cascade = createCascadeSelect({ groups: GROUPS, value: 'top', ariaLabel: '导入单品类目', subPlaceholder: '选择子类' });
     const error = h('p', { class: 'error-text', role: 'alert', hidden: true });
     const results = h('div', { class: 'import', 'aria-live': 'polite' });
-    const details = h('div', { class: 'modal__details', hidden: true }, [field('单品名称', nameInput), categoryField(cascade)]);
+    const details = h('div', { class: 'modal__details', hidden: true }, [field('单品名称', nameInput), categoryField(cascade), field('穿着层级', layerInput)]);
     const save = h('button', { type: 'button', class: 'btn btn--primary', text: '加入衣橱', disabled: true });
     const cancel = h('button', { type: 'button', class: 'btn', text: '关闭' });
     let dismiss;
@@ -158,7 +171,7 @@ export function createWardrobeDialogs({ host, onSaved }) {
       if (!name) { error.textContent = '请填写单品名称'; error.hidden = false; nameInput.focus(); return; }
       state.saving = true; save.disabled = true; cancel.disabled = true; parse.disabled = true; save.textContent = '加入中…'; error.hidden = true;
       try {
-        const saved = await api('/api/wardrobe', { method: 'POST', body: { sourceId: state.source.id, sourceIndex: state.selected, name, category: cascade.getValue(), subtype: cascade.getSubValue() } });
+        const saved = await api('/api/wardrobe', { method: 'POST', body: { sourceId: state.source.id, sourceIndex: state.selected, name, category: cascade.getValue(), subtype: cascade.getSubValue(), layer: layerInput.value } });
         dismiss(); toast('已加入衣橱'); await onSaved({ focusId: saved.item?.id });
       } catch (failure) { error.textContent = errorText(failure); error.hidden = false; }
       finally { state.saving = false; save.disabled = false; cancel.disabled = false; parse.disabled = !urlInput.value.trim(); save.textContent = '加入衣橱'; }
