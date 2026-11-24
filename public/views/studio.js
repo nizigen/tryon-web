@@ -1,6 +1,8 @@
 import { api, getSessionId } from '../lib/api.js';
+import { showDialog } from '../lib/dialog.js';
 import { createCascadeSelect, h, toast } from '../lib/dom.js';
 import { SLOTS, SLOT_BY_KEY, defaultSubtype } from '../lib/garment-taxonomy.js';
+import { icon } from '../lib/icons.js';
 import { loadDefaultPerson } from '../lib/person.js';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -36,10 +38,12 @@ const GROUPS = SLOTS.map((def) => ({
  * 渲染只是把这份对象投影成 DOM，任何交互都先改对象再重绘，不从 DOM 反推。
  */
 export function renderStudio(root, ctx, preset) {
+  const preparedPerson = ctx.pendingPerson;
+  ctx.pendingPerson = null;
   const state = {
-    person: null,
+    person: preparedPerson?.image ?? null,
     /** true 表示人物照是内置模特（还没换成自己的），仅用于提示文案。 */
-    personIsDefault: false,
+    personIsDefault: Boolean(preparedPerson?.isDefault),
     prompt: '',
     fit: 'regular',
     tab: 'result',
@@ -56,7 +60,8 @@ export function renderStudio(root, ctx, preset) {
   const entriesEl = h('div', { class: 'slots' });
   const hintEl = h('p', { class: 'studio__hint', hidden: true });
   const countEl = h('span', { class: 'studio__count' });
-  const submitBtn = h('button', { type: 'button', class: 'btn btn--primary btn--lg', text: '开始试穿' });
+  const pieceCountTag = h('span', { class: 'tag' });
+  const submitBtn = h('button', { type: 'button', class: 'btn btn--primary btn--lg btn--block', text: '生成试穿图' });
   const submitSpinner = h('span', { class: 'spinner', hidden: true });
   const submitStatusText = h('span');
   const submitStatus = h('span', { class: 'studio__busy', hidden: true }, [submitSpinner, submitStatusText]);
@@ -73,16 +78,20 @@ export function renderStudio(root, ctx, preset) {
 
   const addBtn = h('button', {
     type: 'button',
-    class: 'btn btn--sm piece-add',
-    text: '＋ 添加单品',
+    class: 'btn btn--sm',
     'aria-label': '添加一个单品条目',
-  });
+  }, [icon('plus'), '添加单品']);
 
   /** 默认一个「上衣」条目；preset 进来时替换成被预填的那一件。 */
+  /** 衣橱多选带进来的整套单品；单人深链接仍按单件 preset 处理。 */
   function createPieces(seed) {
     const first = { slot: 'top', subtype: '', source: null };
-    if (!seed || !SLOT_BY_KEY[seed.slot]) return [first];
-    return [{ slot: seed.slot, subtype: seed.subtype || '', source: seed.source ?? null }];
+    const list = Array.isArray(seed) ? seed : seed ? [seed] : [];
+    const pieces = list
+      .filter((piece) => piece && SLOT_BY_KEY[piece.slot])
+      .slice(0, MAX_PIECES)
+      .map((piece) => ({ slot: piece.slot, subtype: piece.subtype || '', source: piece.source ?? null }));
+    return pieces.length ? pieces : [first];
   }
 
   function piecesFromState() {
@@ -120,6 +129,15 @@ export function renderStudio(root, ctx, preset) {
     return '本地上传';
   }
 
+  /** 衣橱交接只带 wardrobeId，缩略图回落到受控的图片路由。 */
+  function sourceImage(source) {
+    if (!source) return '';
+    if (source.imageUrl) return source.imageUrl;
+    if (source.image) return source.image;
+    if (source.wardrobeId) return `/api/wardrobe/${encodeURIComponent(source.wardrobeId)}/image`;
+    return '';
+  }
+
   /**
    * 选了图却没选大类时，落到第一个还没被占用的格子；
    * 全部占满（配饰可两件）时退回上衣。后端按格子限件，这里先替用户避开冲突。
@@ -133,34 +151,34 @@ export function renderStudio(root, ctx, preset) {
 
   // ---------------- 衣橱弹层 ----------------
 
-  let pickerEl = null;
-
-  function onPickerKeydown(event) {
-    if (!pickerEl?.isConnected) {
-      document.removeEventListener('keydown', onPickerKeydown);
-      return;
-    }
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    closePicker();
-  }
+  const pickerHost = h('div', { class: 'modal-host', hidden: true });
+  const pickerBody = h('div', { class: 'modal__content', 'aria-live': 'polite' });
+  let dismissPicker = null;
 
   function closePicker() {
-    state.picker.open = false;
-    document.removeEventListener('keydown', onPickerKeydown);
-    pickerEl?.remove();
-    pickerEl = null;
+    dismissPicker?.();
   }
 
   async function openPicker(index) {
     state.picker = { open: true, index, items: [], loading: true, error: '' };
+    const closeButton = h('button', { type: 'button', class: 'icon-button', 'aria-label': '关闭衣橱选择', onclick: closePicker }, [icon('close')]);
+    const panel = h('section', { class: 'modal picker-panel' }, [
+      h('div', { class: 'modal__head' }, [h('h2', { class: 'modal__title', text: '从衣橱选单品' }), closeButton]),
+      pickerBody,
+    ]);
+    root.append(pickerHost);
     renderPicker();
-    document.addEventListener('keydown', onPickerKeydown);
-    pickerEl?.querySelector('.piece__remove')?.focus();
+    dismissPicker = showDialog(pickerHost, panel, {
+      label: '从衣橱选择单品',
+      onClose: () => { state.picker.open = false; dismissPicker = null; pickerHost.remove(); },
+    });
+    const request = state.picker;
     try {
       const payload = await api('/api/wardrobe');
+      if (request !== state.picker || !root.isConnected) return;
       state.picker.items = Array.isArray(payload.items) ? payload.items : [];
     } catch (error) {
+      if (request !== state.picker) return;
       state.picker.error = error.message;
     }
     state.picker.loading = false;
@@ -168,72 +186,38 @@ export function renderStudio(root, ctx, preset) {
   }
 
   function renderPicker() {
-    pickerEl?.remove();
-    pickerEl = null;
-    if (!state.picker.open) return;
-
-    const closeBtn = h('button', {
-      type: 'button',
-      class: 'piece__remove',
-      text: '×',
-      'aria-label': '关闭衣橱选择',
-      onclick: () => closePicker(),
-    });
-
-    const body = h('div', { class: 'slot__body' });
+    pickerBody.replaceChildren();
     if (state.picker.loading) {
-      body.append(h('p', { class: 'field__hint', text: '正在读取衣橱…' }));
-    } else if (state.picker.error) {
-      body.append(h('p', { class: 'error-text', text: state.picker.error }));
-    } else if (state.picker.items.length === 0) {
-      body.append(h('div', { class: 'empty' }, [
-        h('p', { class: 'empty__title', text: '衣橱还是空的' }),
-        h('p', { text: '去「衣橱」上传单品图，或从导入页把商品图加入衣橱后再来挑。' }),
-      ]));
-    } else {
-      const grid = h('div', { class: 'picker__grid' });
-      for (const item of state.picker.items) {
-        const label = item.name || '未命名单品';
-        const slotLabel = SLOT_BY_KEY[item.category]?.label ?? '';
-        const button = h('button', {
-          type: 'button',
-          class: 'picker__item',
-          'aria-label': `选择${label}`,
-        }, [
-          h('img', { src: item.imageUrl, alt: '' }),
-          h('span', { class: 'piece__name', text: label }),
-          h('span', { class: 'piece__source', text: [slotLabel, item.subtype].filter(Boolean).join(' · ') }),
-        ]);
-        button.addEventListener('click', () => applyWardrobeItem(item));
-        grid.append(button);
-      }
-      body.append(grid);
+      pickerBody.append(h('p', { class: 'field__hint', text: '正在读取衣橱…' }));
+      return;
     }
+    if (state.picker.error) {
+      pickerBody.append(h('p', { class: 'error-text', text: state.picker.error }), h('button', { type: 'button', class: 'btn', text: '重试', onclick: () => void reloadPicker() }));
+      return;
+    }
+    if (!state.picker.items.length) {
+      pickerBody.append(h('div', { class: 'empty' }, [h('p', { class: 'empty__title', text: '衣橱还是空的' }), h('p', { text: '先到「我的衣橱」上传单品或从商品链接导入。' })]));
+      return;
+    }
+    pickerBody.append(h('p', { class: 'field__hint', text: '选择一件单品，图片和类目会一起带入当前条目。' }), h('div', { class: 'picker__grid' }, state.picker.items.map((item) => {
+      const label = item.name || '未命名单品';
+      return h('button', { type: 'button', class: 'picker__item', 'aria-label': '选择' + label, onclick: () => applyWardrobeItem(item) }, [
+        h('img', { src: item.imageUrl, alt: '' }),
+        h('span', { class: 'piece__name', text: label }),
+        h('span', { class: 'piece__source', text: [SLOT_BY_KEY[item.category]?.label, item.subtype].filter(Boolean).join(' / ') }),
+      ]);
+    })));
+  }
 
-    pickerEl = h('div', {
-      class: 'picker',
-      role: 'dialog',
-      'aria-modal': 'true',
-      'aria-label': '从衣橱选择单品',
-    }, [
-      h('div', { class: 'card' }, [
-        h('div', { class: 'piece-head' }, [
-          h('h2', { class: 'section__title', text: '从衣橱选' }),
-          h('span', { class: 'push-end' }, [closeBtn]),
-        ]),
-        h('p', { class: 'field__hint', text: '点一件单品，直接填进这个条目；大类与子类会跟着改成它的类目。' }),
-        body,
-      ]),
-    ]);
-    // 点遮罩空白处关闭；点面板内部不关。
-    pickerEl.addEventListener('click', (event) => {
-      if (event.target === pickerEl) closePicker();
-    });
-    root.append(pickerEl);
+  async function reloadPicker() {
+    const index = state.picker.index;
+    closePicker();
+    await openPicker(index);
   }
 
   function applyWardrobeItem(item) {
-    const piece = state.pieces[state.picker.index];
+    const index = state.picker.index;
+    const piece = state.pieces[index];
     if (!piece) return;
     const def = SLOT_BY_KEY[item.category];
     piece.slot = def ? def.key : 'top';
@@ -246,6 +230,7 @@ export function renderStudio(root, ctx, preset) {
     };
     closePicker();
     paint();
+    entriesEl.children[index]?.querySelector('summary')?.focus({ preventScroll: true });
   }
 
   // ---------------- 商品链接面板 ----------------
@@ -367,12 +352,15 @@ export function renderStudio(root, ctx, preset) {
     });
 
     const hint = h('span', { class: 'field__hint', text: def?.hint ?? '先选大类，再挑单品图' });
+    if (piece.source) hint.hidden = true;
 
-    card.append(h('div', { class: 'piece-head' }, [
-      h('span', { class: 'slot__pill', text: `单品 ${index + 1}` }),
-      hint,
-      h('span', { class: 'push-end' }, [removeBtn]),
-    ]));
+    if (!piece.source) {
+      card.append(h('div', { class: 'piece-head' }, [
+        h('span', { class: 'slot__pill', text: `单品 ${index + 1}` }),
+        hint,
+        h('span', { class: 'push-end' }, [removeBtn]),
+      ]));
+    }
 
     const cascade = createCascadeSelect({
       groups: GROUPS,
@@ -387,11 +375,11 @@ export function renderStudio(root, ctx, preset) {
         // 只改文案与计数，不重建条目：重建会把刚点过的胶囊换成新节点，键盘焦点会丢。
         const nextDef = SLOT_BY_KEY[slot];
         hint.textContent = nextDef?.hint ?? '先选大类，再挑单品图';
+        hint.hidden = Boolean(piece.source);
         card.classList.toggle('is-filled', Boolean(piece.source));
         updateSubmit();
       },
     });
-    card.append(cascade.el);
 
     const fileInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', hidden: true });
     fileInput.addEventListener('change', () => readImage(fileInput.files?.[0], (dataUrl) => {
@@ -404,54 +392,62 @@ export function renderStudio(root, ctx, preset) {
       fileInput.value = '';
     });
 
-    card.append(h('div', { class: 'inline-field' }, [
-      h('button', {
-        type: 'button',
-        class: 'btn btn--sm',
-        text: '上传',
-        'aria-label': `上传第 ${index + 1} 个单品的图片`,
-        onclick: () => fileInput.click(),
-      }),
-      h('button', {
-        type: 'button',
-        class: 'btn btn--sm',
-        text: '从衣橱选',
-        'aria-label': `从衣橱选择第 ${index + 1} 个单品`,
-        onclick: () => void openPicker(index),
-      }),
-      h('button', {
-        type: 'button',
-        class: 'btn btn--sm',
-        text: '商品链接',
-        'aria-label': `用商品链接添加第 ${index + 1} 个单品`,
-        onclick: () => toggleLink(index),
-      }),
-      fileInput,
-    ]));
-
-    if (state.link.index === index) card.append(buildLinkPanel(index, piece));
+    const editor = h('div', { class: 'piece-editor' }, [
+      cascade.el,
+      h('div', { class: 'inline-field' }, [
+        h('button', {
+          type: 'button',
+          class: 'btn btn--sm',
+          text: '上传',
+          'aria-label': `上传第 ${index + 1} 个单品的图片`,
+          onclick: () => fileInput.click(),
+        }),
+        h('button', {
+          type: 'button',
+          class: 'btn btn--sm',
+          text: '从衣橱选',
+          'aria-label': `从衣橱选择第 ${index + 1} 个单品`,
+          onclick: () => void openPicker(index),
+        }),
+        h('button', {
+          type: 'button',
+          class: 'btn btn--sm',
+          text: '商品链接',
+          'aria-label': `用商品链接添加第 ${index + 1} 个单品`,
+          onclick: () => toggleLink(index),
+        }),
+        fileInput,
+      ]),
+    ]);
 
     if (piece.source) {
       const clearBtn = h('button', {
         type: 'button',
-        class: 'piece__remove',
-        text: '×',
+        class: 'btn btn--ghost btn--sm',
+        text: '清空图片',
         'aria-label': `清除第 ${index + 1} 个单品的图片`,
       });
       clearBtn.addEventListener('click', () => {
         piece.source = null;
         paint();
       });
-      card.append(h('div', { class: 'piece' }, [
-        h('div', { class: 'piece__thumb' }, [
-          h('img', { src: piece.source.imageUrl || piece.source.image || '', alt: '' }),
+      const details = h('details', { class: 'piece-details piece-details--compact', open: state.link.index === index }, [
+        h('summary', { class: 'piece', title: '展开以更换图片或类目' }, [
+          h('span', { class: 'piece__thumb' }, [h('img', { src: sourceImage(piece.source), alt: '' })]),
+          h('span', { class: 'piece__meta' }, [
+            h('span', { class: 'piece__name', text: piece.source.name || piece.subtype || def?.label || '已选单品' }),
+            h('span', { class: 'piece__source', text: `${def?.label ?? '单品'} / ${sourceLabel(piece.source)}` }),
+            h('span', { class: 'piece__edit-label', text: '更换图片或类目' }),
+          ]),
         ]),
-        h('div', { class: 'piece__meta' }, [
-          h('span', { class: 'piece__name', text: piece.source.name || piece.subtype || def?.label || '已选单品' }),
-          h('span', { class: 'piece__source', text: sourceLabel(piece.source) }),
-        ]),
+        editor,
         clearBtn,
-      ]));
+      ]);
+      if (state.link.index === index) details.append(buildLinkPanel(index, piece));
+      card.append(details, removeBtn);
+    } else {
+      card.append(editor);
+      if (state.link.index === index) card.append(buildLinkPanel(index, piece));
     }
 
     return card;
@@ -479,6 +475,7 @@ export function renderStudio(root, ctx, preset) {
 
   function updateSubmit() {
     const pieces = piecesFromState();
+    pieceCountTag.textContent = `${pieces.length} 件单品`;
     const busy = Boolean(state.order && state.order.status === 'pending');
     if (pieces.length > MAX_PIECES) {
       countEl.textContent = `已选 ${pieces.length} 件，超过上限 ${MAX_PIECES} 件`;
@@ -495,7 +492,7 @@ export function renderStudio(root, ctx, preset) {
       countEl.classList.add('is-over');
     }
     submitBtn.disabled = busy || !state.person || pieces.length === 0 || pieces.length > MAX_PIECES || tooHeavy;
-    submitBtn.textContent = busy ? '生成中…' : '开始试穿';
+    submitBtn.textContent = busy ? '生成中…' : '生成试穿图';
     // 按钮旁同步显示转圈与阶段：只在结果区转圈时，首屏看着像「完全不转」。
     submitStatus.hidden = !busy;
     submitSpinner.hidden = !busy;
@@ -515,9 +512,13 @@ export function renderStudio(root, ctx, preset) {
       personBtn.textContent = state.personIsDefault ? '换成我的照片' : '更换照片';
     } else {
       uploadPreview.hidden = true;
-      personBtn.textContent = '拍照 / 相册';
+      personBtn.textContent = '上传全身照';
     }
     dropzone.classList.toggle('has-image', Boolean(state.person));
+    dropzone.querySelector('.dropzone__title').textContent = state.personIsDefault
+      ? '内置模特'
+      : state.person ? '你的照片' : '正面全身照，站姿自然效果更好';
+    if (!state.order) paintResult();
     updateSubmit();
   }
 
@@ -530,10 +531,24 @@ export function renderStudio(root, ctx, preset) {
     resultBody.replaceChildren();
     const order = state.order;
     if (!order) {
-      resultBody.append(h('div', { class: 'empty' }, [
-        h('p', { class: 'empty__title', text: '还没有试穿结果' }),
-        h('p', { text: '上传全身照、挑好单品，点「开始试穿」。' }),
-      ]));
+      if (state.person) {
+        resultBody.append(
+          h('div', { class: 'canvas' }, [
+            h('img', { src: state.person, alt: '当前人物原图，尚未生成试穿结果' }),
+            h('span', { class: 'canvas__label', text: state.personIsDefault ? '内置模特 · 原图' : '你的照片 · 原图' }),
+          ]),
+          h('div', { class: 'preview-actions' }, [
+            h('p', { text: '选好单品后，点右侧「生成试穿图」。' }),
+            h('a', { class: 'btn btn--sm', href: '#/wardrobe', text: '换几件单品' }),
+          ]),
+        );
+      } else {
+        resultBody.append(h('div', { class: 'empty' }, [
+          icon('image'),
+          h('p', { class: 'empty__title', text: '先选一张人物照片' }),
+          h('p', { text: '上传全身照或使用内置模特，再挑几件单品。' }),
+        ]));
+      }
       return;
     }
     if (order.status === 'pending') {
@@ -688,9 +703,9 @@ export function renderStudio(root, ctx, preset) {
   const dropzone = h('div', { class: 'dropzone' }, [
     uploadPreview,
     h('div', { class: 'dropzone__meta' }, [
-      h('p', { class: 'dropzone__title', text: '默认用内置模特；也可以上传自己的全身照，正面站立、背景干净效果最好' }),
+      h('p', { class: 'dropzone__title', text: '默认使用内置模特；换成自己的正面全身照效果更贴近你' }),
       h('div', { class: 'dropzone__actions' }, [personBtn]),
-      h('p', { class: 'field__hint', text: 'PNG / JPEG / WebP，不超过 8MB；照片只用于本次生成。' }),
+      h('p', { class: 'field__hint', text: 'PNG / JPEG / WebP，不超过 8MB' }),
       uploadError,
     ]),
     personInput,
@@ -744,15 +759,29 @@ export function renderStudio(root, ctx, preset) {
 
   root.append(
     h('section', { class: 'page-head' }, [
-      h('h1', { class: 'page-title', text: '搭配工作台' }),
-      h('p', { class: 'page-sub', text: '默认用内置模特，添加单品组合成一套，再一键试穿；也可以换成你自己的照片。' }),
+      h('div', {}, [
+        h('h1', { class: 'page-title', text: '试穿工作台' }),
+        h('p', { class: 'page-sub', text: '选好人物与单品，看看这套衣服穿在身上的样子。' }),
+      ]),
+      h('div', { class: 'page-actions' }, [
+        h('button', { type: 'button', class: 'btn', text: '去衣橱挑单品', onclick: () => ctx.onNavigate('wardrobe') }),
+      ]),
     ]),
     h('div', { class: 'studio' }, [
+      h('div', { class: 'studio__preview' }, [
+        h('section', { class: 'card' }, [
+          h('div', { class: 'card__head' }, [
+            h('h2', { class: 'section__title', text: '试穿效果' }),
+            pieceCountTag,
+          ]),
+          resultBody,
+        ]),
+      ]),
       h('div', { class: 'studio__controls' }, [
         h('section', { class: 'card' }, [
           h('div', { class: 'card__head' }, [
             h('div', { class: 'card__heading' }, [
-              h('h2', { class: 'section__title', text: '人物照片' }),
+              h('h2', { class: 'section__title', text: '试穿人物' }),
             ]),
           ]),
           dropzone,
@@ -760,8 +789,7 @@ export function renderStudio(root, ctx, preset) {
         h('section', { class: 'card' }, [
           h('div', { class: 'card__head' }, [
             h('div', { class: 'card__heading' }, [
-              h('h2', { class: 'section__title', text: '单品搭配' }),
-              h('p', { class: 'section__hint', text: '每个单品：大类 · 子类 · 单品图' }),
+              h('h2', { class: 'section__title', text: '这一套怎么穿' }),
             ]),
             h('span', { class: 'push-end' }, [addBtn]),
           ]),
@@ -774,29 +802,19 @@ export function renderStudio(root, ctx, preset) {
               h('span', { class: 'field__label', text: '版型' }),
               fitButtons,
             ]),
-            h('div', { class: 'field' }, [
-              h('label', { class: 'field__label', for: 'studio-prompt', text: '补充要求' }),
-              promptInput,
-              promptCounter,
-            ]),
+          ]),
+          h('details', { class: 'studio__advanced' }, [
+            h('summary', { text: '补充要求（选填）' }),
+            h('div', { class: 'field' }, [h('label', { class: 'field__label', for: 'studio-prompt', text: '希望保留或调整的细节' }), promptInput, promptCounter]),
           ]),
         ]),
-        h('section', { class: 'card' }, [
+        h('section', { class: 'card studio__submit-card' }, [
           h('div', { class: 'studio__submit' }, [
             h('div', { class: 'studio__submit-info' }, [countEl, demoNote]),
             h('span', { class: 'push-end' }, [submitStatus, submitBtn]),
           ]),
         ]),
-      ]),
-      h('div', { class: 'studio__preview' }, [
-        h('section', { class: 'card' }, [
-          h('div', { class: 'card__head' }, [
-            h('div', { class: 'card__heading' }, [
-              h('h2', { class: 'section__title', text: '试穿结果' }),
-            ]),
-          ]),
-          resultBody,
-        ]),
+        h('p', { class: 'studio__legal' }, [icon('shield'), '照片只用于本次生成。AI 效果仅供参考；生成失败全额退回。']),
       ]),
     ]),
   );

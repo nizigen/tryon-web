@@ -275,3 +275,19 @@
 - 原先 screenshot 的人物网格项被固有尺寸撑大，已在图片归属处设绝对定位与 contain；13 个最终渲染场景重新检查，无溢出/破图/人物越界/脚本异常。截图方法只用于渲染与只读度量，不作为交互验收。
 - OpenCLI `BROWSER_CONNECT`（扩展未连接）；Huashu lint 缺 Python Playwright 跳过；LSP 默认 biome 等服务缺失。保留这些缺口，未安装工具或更换交互驱动。
 
+## 已批准正式实现选型（2026-11-23）
+
+用户「按你说的来即可」批准 B 衣橱 + A 工作台。已检查 `public/views/wardrobe.js` 的上传/编辑/导入、`studio.js` 的 `applyWardrobeItem`/pieces 状态与结果流、`lib/dom.js` 的 h/两级下拉、app.js 的路由与上下文；已有 REST 完整覆盖本轮，选复用与适配，无需外部工程库。
+视觉源码在原 `style.css` 前后叠加两套主题，重写为当前批准的单一规则；原生 HTML/ESM、系统字体与自有 SVG 不增依赖或外链。HTML 继续通过 h/textContent 构造，不移植预览的模板渲染器。
+衣橱仅新增当前搭配的 ID 列表，显示由真实 items 派生；用现有 `{slot, subtype, source:{kind:'wardrobe', wardrobeId}}` 交接工作台，服务端继续校验 ID 与类别冲突。上传/导入/编辑/删除由原接口持久化，人物继续仅在内存流转。弹窗用浏览器原生 dialog 统一焦点与背景隔离；不引入第三方弹层包或复制后端模型。
+威胁面：外部商品名/错误文案只能进入 textContent；图片仍走已有受控 URL；菜单操作显式确认真实单品，禁用并发重复写入；不把演示预览内容写进真实衣橱，不自动扫码或付费生成。
+检查目标：原有 139 项 API/领域测试、五件交接、类别筛选/搜索、菜单键盘与删除确认、导入长弹窗、原图/生成阶段/结果下载、所有路由的多尺寸布局。改动前基线 138/139 通过，失败定位 `test/source.test.mjs:212` Windows PATH 假路径，不改业务代码去掩盖平台测试前提。
+
+## 最终实现与证据（2026-11-24）
+
+- 按 B+A 完成正式页面，保留现有 API、计费与来源归属。旧主题 CSS 已合一；原生 dialog、h/textContent、自有 SVG 与现有两级下拉解决交互需求，没有新框架/SDK/字体 CDN。
+- 独立评审推动修正动态弹层遗漏、搜索命中未刷新、手机固定条遮挡菜单、CRUD 后焦点丢失；最终复审及紧凑布局检查均无剩余阻断。详见 CONTRACT_REVIEW.md。
+- 前端 CLI 回归复用原生 Chromium/CDP 与真实临时后端，不做第二套业务模型；用实际持久化 JSON 验证编辑、删除与订单成功，仅外部模型服务模拟。`node --test` 最终 149/149，0 skip；原 Windows 假路径测试改用平台原生路径，source.mjs 未改。
+- 运行中的 18 个 HTML/JS/CSS 与源码逐字节一致；静态重验证解决旧 CSS/ESM 缓存，图片仍短缓存；清单与代码摘要见 `public/design-demos/shots/final-verification.json`。
+- 自行创建的三件真实 API 截图样例已按自有 ID 删除，用户运行衣橱恢复 0 件。截图与临时后端测试不说明真实付费上游或手机扫码已重验。
+

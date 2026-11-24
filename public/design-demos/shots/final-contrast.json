@@ -1,0 +1,45 @@
+{
+  "checks": [
+    {
+      "route": "wardrobe",
+      "width": 1440,
+      "measured": 35,
+      "minRatio": 4.83,
+      "lowContrastText": []
+    },
+    {
+      "route": "wardrobe",
+      "width": 390,
+      "measured": 28,
+      "minRatio": 4.83,
+      "lowContrastText": []
+    },
+    {
+      "route": "studio",
+      "width": 1440,
+      "measured": 44,
+      "minRatio": 1.91,
+      "lowContrastText": [
+        {
+          "text": "×",
+          "ratio": 1.91
+        }
+      ]
+    },
+    {
+      "route": "settings",
+      "width": 1440,
+      "measured": 38,
+      "minRatio": 5.08,
+      "lowContrastText": []
+    },
+    {
+      "route": "me",
+      "width": 390,
+      "measured": 20,
+      "minRatio": 4.83,
+      "lowContrastText": []
+    }
+  ],
+  "errors": []
+}

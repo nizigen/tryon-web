@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { delimiter, join, resolve } from 'node:path';
 import test from 'node:test';
 
 import { createSourceService, locateOpenCli, originalImageUrl } from '../src/source.mjs';
@@ -210,12 +211,13 @@ test('没有 OpenCLI 时给出可读的 503，而不是静默降级', async () =
 });
 
 test('locateOpenCli 在 PATH 目录里找到 opencli 入口', () => {
-  const fake = 'C:\\fake\\bin';
+  const fake = resolve('fake', 'bin');
+  const expected = join(fake, 'node_modules', '@jackwener', 'opencli', 'dist', 'src', 'main.js');
   const entry = locateOpenCli(
-    { PATH: `${fake};C:\\other`, OS: 'Windows_NT' },
-    (candidate) => candidate === `${fake}\\node_modules\\@jackwener\\opencli\\dist\\src\\main.js`,
+    { PATH: [fake, resolve('other')].join(delimiter), OS: process.platform === 'win32' ? 'Windows_NT' : undefined },
+    (candidate) => candidate === expected,
   );
-  assert.equal(entry, `${fake}\\node_modules\\@jackwener\\opencli\\dist\\src\\main.js`);
+  assert.equal(entry, expected);
   assert.equal(locateOpenCli({ PATH: '' }, () => false), null);
 });
 

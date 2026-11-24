@@ -184,7 +184,7 @@ async function serveStatic(request, response, pathname) {
   response.writeHead(200, {
     'content-type': type,
     'content-length': body.length,
-    'cache-control': type.startsWith('text/html') ? 'no-cache' : 'public, max-age=300',
+    'cache-control': ['.html', '.js', '.css'].includes(extname(target)) ? 'no-cache' : 'public, max-age=300',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",

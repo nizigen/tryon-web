@@ -1,16 +1,14 @@
 import { api, deviceId, getSessionId, setSessionId } from '../lib/api.js';
-import { createCascadeSelect, errorText, h, toast } from '../lib/dom.js';
-import { SLOTS, SLOT_BY_KEY } from '../lib/garment-taxonomy.js';
+import { showDialog } from '../lib/dialog.js';
+import { closeAllMenus, createActionMenu, errorText, h, toast } from '../lib/dom.js';
+import { SLOT_BY_KEY } from '../lib/garment-taxonomy.js';
+import { icon } from '../lib/icons.js';
 import { loadDefaultPerson } from '../lib/person.js';
+import { createWardrobeDialogs } from '../lib/wardrobe-dialogs.js';
 
-const CASCADE_GROUPS = SLOTS.map((slot) => ({
-  value: slot.key,
-  label: slot.label,
-  options: slot.subtypes.map((subtype) => ({ value: subtype, label: subtype })),
-}));
-const SLOT_ORDER = SLOTS.map((slot) => slot.key);
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_PIECES = 5;
 const POLL_INTERVAL = 1500;
 const POLL_MAX_TICKS = 160; // 约 4 分钟
 
@@ -32,16 +30,19 @@ function thumbSrc(item) {
 }
 
 /**
- * 我的衣橱：真实条目网格 + 搜索 + 上传入橱 + 今日穿搭（选搭配并生成试穿图）。
+ * 我的衣橱：真实条目网格 + 当前搭配 + 搜索 + 上传/编辑/删除/链接导入 + 今日穿搭。
+ * 当前搭配只保存真实条目 ID，显示与提交都从 state.items 派生，避免复制一份单品真相。
  */
 export function renderWardrobe(root, ctx) {
   const state = {
     items: [],
     loading: true,
     error: '',
-    view: 'all', // all | search
+    view: 'all',
     searchQuery: '',
     searchResults: [],
+    category: '',
+    selection: [],
     suggestion: null,
     stylistBusy: false,
     person: null,
@@ -52,26 +53,27 @@ export function renderWardrobe(root, ctx) {
     pollTicks: 0,
   };
 
-  // ---- 顶部与网格 ----
   const fileInput = h('input', { type: 'file', accept: IMAGE_TYPES.join(','), hidden: true });
-  const searchInput = h('input', { type: 'text', class: 'search', placeholder: '搜索衣橱单品，例如：白衬衫', 'aria-label': '搜索衣橱单品' });
-  const searchBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '搜索' });
-  const searchClear = h('button', { type: 'button', class: 'btn btn--ghost', text: '清除搜索', hidden: true });
+  const searchInput = h('input', { type: 'search', placeholder: '搜索名称或描述，例如：白衬衫', 'aria-label': '搜索衣橱单品' });
   const gridEl = h('div', { class: 'wardrobe-grid' });
+  const filtersEl = h('div', { class: 'filters', role: 'group', 'aria-label': '按类目筛选' });
+  const countEl = h('p', { class: 'wardrobe-toolbar__count', role: 'status' });
+  const selectionEl = h('div', { class: 'selection-list' });
+  const selectionCount = h('span', { class: 'field__hint', 'aria-live': 'polite' });
+  const mobileSelectionCount = h('span', { class: 'field__hint', 'aria-live': 'polite' });
+  const mobileGoStudio = h('button', { type: 'button', class: 'btn btn--primary', text: '去试穿', disabled: true });
+  const mobileSelectionList = h('div', { class: 'selection-list' });
+  const personPreview = h('img', { class: 'wardrobe-person__image', alt: '当前试穿人物原图', hidden: true });
+  const goStudio = h('button', { type: 'button', class: 'btn btn--primary btn--block', text: '去试穿这一套', disabled: true });
   const modalHost = h('div', { class: 'modal-host', hidden: true });
+  const { openUploadModal, openEditModal, openImportModal, removeItem } = createWardrobeDialogs({ host: modalHost, onSaved: loadItems });
 
   // ---- 今日穿搭 ----
-  const requestInput = h('input', {
-    type: 'text',
-    class: 'search',
-    maxlength: '200',
-    placeholder: '例如：明天面试，想穿得正式一点又不显老',
-    'aria-label': '今日穿搭需求',
-  });
-  const suggestBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '帮我选' });
+  const requestInput = h('input', { type: 'text', maxlength: '200', placeholder: '例如：明天面试，想穿得正式一点又不显老', 'aria-label': '今日穿搭需求' });
+  const suggestBtn = h('button', { type: 'button', class: 'btn', text: '帮我选' });
   const suggestionEl = h('div', { class: 'stylist__result' });
   const personInput = h('input', { type: 'file', accept: IMAGE_TYPES.join(','), hidden: true });
-  const personPreview = h('img', { class: 'stylist__person-preview', alt: '全身照预览', hidden: true });
+  const stylistPersonPreview = h('img', { class: 'stylist__person-preview', alt: '全身照预览', hidden: true });
   const personBtn = h('button', { type: 'button', class: 'btn btn--sm', text: '上传全身照' });
   const personNote = h('p', { class: 'stylist__person-note', hidden: true });
   const orderBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '生成试穿图' });
@@ -80,74 +82,186 @@ export function renderWardrobe(root, ctx) {
   const orderStatus = h('p', { class: 'stylist__status', hidden: true }, [orderSpinner, orderStatusText]);
   const resultEl = h('div', { class: 'stylist__result-img-wrap' });
 
-  // ---- 数据加载 ----
-  async function loadItems() {
+  // ---- 数据 ----
+  async function loadItems({ focusId } = {}) {
+    if (!root.isConnected) return;
     state.loading = true;
     state.error = '';
     paintGrid();
     try {
       const payload = await api('/api/wardrobe');
       state.items = Array.isArray(payload.items) ? payload.items : [];
+      state.selection = state.selection.filter((id) => state.items.some((item) => item.id === id));
+      if (state.view === 'search' && state.searchQuery) {
+        const search = await api('/api/wardrobe/search', { method: 'POST', body: { query: state.searchQuery } });
+        state.searchResults = Array.isArray(search.results) ? search.results : [];
+      }
     } catch (error) {
       state.error = errorText(error);
       state.items = [];
     } finally {
       state.loading = false;
       paintGrid();
+      paintSelection();
+      if (focusId && root.isConnected) {
+        const card = [...gridEl.querySelectorAll('[data-item-id]')].find((node) => node.dataset.itemId === focusId);
+        const target = card?.querySelector('[aria-haspopup="menu"]') ?? gridEl.querySelector('[aria-haspopup="menu"]') ?? root.querySelector('.wardrobe-head__actions .btn--primary');
+        target?.focus({ preventScroll: true });
+      }
     }
   }
 
-  // ---- 网格渲染 ----
   function categoryText(item) {
     return SLOT_BY_KEY[item.category]?.label || item.category || '未分类';
   }
 
+  function visibleItems() {
+    const list = state.view === 'search'
+      ? state.searchResults.map((entry) => itemById(entry.item.id)).filter(Boolean)
+      : state.items;
+    return state.category ? list.filter((item) => item.category === state.category) : list;
+  }
+
+  function itemById(id) {
+    return state.items.find((item) => item.id === id) ?? null;
+  }
+
+  // ---- 当前搭配 ----
+  function toggleSelection(id) {
+    if (state.selection.includes(id)) {
+      state.selection = state.selection.filter((value) => value !== id);
+    } else if (state.selection.length >= MAX_PIECES) {
+      toast(`每套最多 ${MAX_PIECES} 件，先从当前搭配里移除一件`);
+      return;
+    } else {
+      state.selection = [...state.selection, id];
+    }
+    paintGrid();
+    paintSelection();
+    const card = [...gridEl.querySelectorAll('[data-item-id]')].find((node) => node.dataset.itemId === id);
+    if (!document.querySelector('dialog[open]')) card?.querySelector('.wardrobe-card__thumb')?.focus({ preventScroll: true });
+  }
+
+  function piecesFromSelection() {
+    return state.selection
+      .map((id) => itemById(id))
+      .filter(Boolean)
+      .map((item) => ({ slot: item.category, subtype: item.subtype || '', source: { kind: 'wardrobe', wardrobeId: item.id, imageUrl: thumbSrc(item), name: item.name || '' } }));
+  }
+
+  function paintSelection() {
+    selectionCount.textContent = `已选 ${state.selection.length} / ${MAX_PIECES} 件`;
+    mobileSelectionCount.textContent = `当前搭配 ${state.selection.length} / ${MAX_PIECES} 件`;
+    paintSelectionList(selectionEl);
+    if (mobileSelectionList.isConnected) {
+      paintSelectionList(mobileSelectionList);
+      const handoff = mobileSelectionList.closest('dialog')?.querySelector('.modal__actions .btn--primary');
+      if (handoff) handoff.disabled = piecesFromSelection().length === 0;
+    }
+    goStudio.disabled = mobileGoStudio.disabled = piecesFromSelection().length === 0;
+  }
+
+  function paintSelectionList(list) {
+    list.replaceChildren();
+    if (state.selection.length === 0) {
+      list.append(h('p', { class: 'field__hint', text: '点单品图片加入这一套，最多五件。' }));
+    }
+    for (const id of state.selection) {
+      const item = itemById(id);
+      if (!item) continue;
+      const remove = h('button', { type: 'button', class: 'icon-button', 'aria-label': `从搭配移除${item.name || '单品'}`, onclick: () => { toggleSelection(id); if (list === mobileSelectionList) mobileSelectionList.querySelector('button')?.focus(); } }, [icon('close')]);
+      list.append(h('div', { class: 'selection-item' }, [
+        h('img', { class: 'selection-item__thumb', src: thumbSrc(item), alt: '' }),
+        h('div', { class: 'selection-item__text' }, [
+          h('span', { class: 'selection-item__name', text: item.name || '未命名单品' }),
+          h('span', { class: 'selection-item__meta', text: [categoryText(item), item.subtype].filter(Boolean).join(' / ') }),
+        ]),
+        remove,
+      ]));
+    }
+  }
+
+  function openSelection() {
+    let dismiss;
+    const close = h('button', { type: 'button', class: 'btn', text: '继续挑选', onclick: () => dismiss() });
+    const handoff = h('button', { type: 'button', class: 'btn btn--primary', text: '去试穿', disabled: piecesFromSelection().length === 0, onclick: () => { dismiss(); goToStudio(); } });
+    const panel = h('section', { class: 'modal' }, [
+      h('div', { class: 'modal__head' }, [h('h2', { class: 'modal__title', text: '当前搭配' })]),
+      h('div', { class: 'modal__content' }, [mobileSelectionList]),
+      h('div', { class: 'modal__actions' }, [close, handoff]),
+    ]);
+    paintSelectionList(mobileSelectionList);
+    dismiss = showDialog(modalHost, panel, { label: '当前搭配' });
+  }
+
+  function goToStudio() {
+    if (!piecesFromSelection().length) return;
+    ctx.pendingPieces = piecesFromSelection();
+    ctx.pendingPerson = { image: state.person, isDefault: state.personIsDefault };
+    ctx.onNavigate('studio');
+  }
+
+  // ---- 网格 ----
   function renderCard(item) {
-    const del = h('button', {
+    const selected = state.selection.includes(item.id);
+    const choose = h('button', {
       type: 'button',
-      class: 'wardrobe-card__del',
-      'aria-label': `删除${item.name || '单品'}`,
-      text: '×',
-    });
-    del.addEventListener('click', () => void removeItem(item, del));
-    const edit = h('button', {
-      type: 'button',
-      class: 'wardrobe-card__edit',
-      'aria-label': `编辑${item.name || '单品'}的名称和类目`,
-      text: '✎',
-    });
-    edit.addEventListener('click', () => openEditModal(item));
-    return h('article', { class: 'wardrobe-card' }, [
-      h('div', { class: 'wardrobe-card__thumb' }, [
-        h('img', { src: thumbSrc(item), alt: item.name || '衣橱单品' }),
-      ]),
+      class: 'wardrobe-card__thumb',
+      'aria-label': `${selected ? '从搭配移除' : '选入搭配'}${item.name || '单品'}`,
+      'aria-pressed': String(selected),
+      onclick: () => toggleSelection(item.id),
+    }, [
+      h('img', { src: thumbSrc(item), alt: item.name || '衣橱单品' }),
+      selected ? h('span', { class: 'wardrobe-card__check', 'aria-hidden': 'true' }, [icon('check')]) : null,
+    ]);
+    return h('article', { class: `wardrobe-card${selected ? ' is-selected' : ''}`, dataset: { itemId: item.id } }, [
+      choose,
       h('div', { class: 'wardrobe-card__body' }, [
-        h('span', { class: 'wardrobe-card__name', text: item.name || '未命名单品' }),
-        h('span', { class: 'wardrobe-card__cat', text: categoryText(item) }),
+        h('div', { class: 'wardrobe-card__text' }, [
+          h('h3', { class: 'wardrobe-card__name', text: item.name || '未命名单品' }),
+          h('span', { class: 'wardrobe-card__cat', text: [categoryText(item), item.subtype].filter(Boolean).join(' / ') }),
+        ]),
+        createActionMenu(`${item.name || '单品'}的更多操作`, [
+          { label: '编辑单品', icon: 'edit', run: () => openEditModal(item) },
+          { label: '删除单品', icon: 'trash', danger: true, run: () => removeItem(item) },
+        ]),
       ]),
-      edit,
-      del,
     ]);
   }
 
-  function emptyState() {
-    return h('div', { class: 'wardrobe-empty' }, [
-      h('p', { class: 'wardrobe-empty__title', text: '衣橱还是空的，上传或从商品链接导入一件吧' }),
-      h('div', { class: 'wardrobe-empty__actions' }, [
-        h('button', { type: 'button', class: 'btn btn--primary', text: '去搭配工作台', onclick: () => ctx.onNavigate('studio') }),
-        h('button', { type: 'button', class: 'btn', text: '从商品链接导入', onclick: () => openImportModal() }),
-      ]),
-    ]);
+  function paintFilters() {
+    const present = [...new Set(state.items.map((item) => item.category))];
+    const options = [{ key: '', label: '全部' }, ...present.filter((key) => SLOT_BY_KEY[key]).map((key) => ({ key, label: slotLabel(key) }))];
+    filtersEl.replaceChildren(...options.map((option) => h('button', {
+      type: 'button',
+      class: `filter${state.category === option.key ? ' is-active' : ''}`,
+      'aria-pressed': String(state.category === option.key),
+      text: option.label,
+      onclick: () => {
+        state.category = option.key;
+        paintGrid();
+        const button = [...filtersEl.querySelectorAll('button')].find((node) => node.textContent === option.label);
+        button?.focus({ preventScroll: true });
+      },
+    })));
   }
 
   function paintGrid() {
-    const searching = state.view === 'search';
-    searchClear.hidden = !searching;
+    closeAllMenus();
+    paintFilters();
+    const list = visibleItems();
+    countEl.textContent = state.loading
+      ? '正在读取衣橱…'
+      : state.view === 'search'
+        ? `「${state.searchQuery}」找到 ${list.length} 件`
+        : state.category
+          ? `${slotLabel(state.category)} ${list.length} 件`
+          : `共 ${list.length} 件单品`;
     if (state.loading) {
-      gridEl.replaceChildren(h('p', { class: 'field__hint', text: '正在加载衣橱…' }));
+      gridEl.replaceChildren(...Array.from({ length: 6 }, () => h('div', { class: 'skeleton wardrobe-card__skeleton' })));
       return;
     }
-    if (state.error && state.items.length === 0 && !searching) {
+    if (state.error && state.items.length === 0) {
       gridEl.replaceChildren(h('div', { class: 'wardrobe-empty' }, [
         h('p', { class: 'wardrobe-empty__title', text: '衣橱读取失败' }),
         h('p', { class: 'field__hint', text: state.error }),
@@ -155,51 +269,39 @@ export function renderWardrobe(root, ctx) {
       ]));
       return;
     }
-    if (!searching && state.items.length === 0) {
-      gridEl.replaceChildren(emptyState());
-      return;
-    }
-    if (searching && state.searchResults.length === 0) {
+    if (state.items.length === 0) {
       gridEl.replaceChildren(h('div', { class: 'wardrobe-empty' }, [
-        h('p', { class: 'wardrobe-empty__title', text: `没有找到与「${state.searchQuery}」匹配的单品` }),
-        h('button', { type: 'button', class: 'btn btn--sm', text: '查看全部', onclick: clearSearch }),
+        h('span', { class: 'wardrobe-empty__icon' }, [icon('wardrobe')]),
+        h('p', { class: 'wardrobe-empty__title', text: '衣橱还是空的' }),
+        h('p', { class: 'field__hint', text: '上传自己的单品图，或从商品链接导入一件，之后搭配和试穿都会更快。' }),
+        h('div', { class: 'wardrobe-empty__actions' }, [
+          h('button', { type: 'button', class: 'btn btn--primary', text: '上传单品', onclick: () => fileInput.click() }),
+          h('button', { type: 'button', class: 'btn', text: '从商品链接导入', onclick: () => openImportModal() }),
+        ]),
       ]));
       return;
     }
-    const list = searching ? state.searchResults.map((entry) => entry.item) : state.items;
+    if (list.length === 0) {
+      gridEl.replaceChildren(h('div', { class: 'wardrobe-empty' }, [
+        h('p', { class: 'wardrobe-empty__title', text: state.view === 'search' ? `没有找到与「${state.searchQuery}」匹配的单品` : '这个类目下还没有单品' }),
+        h('button', { type: 'button', class: 'btn btn--sm', text: '查看全部', onclick: () => { state.view = 'all'; state.category = ''; state.searchQuery = ''; searchInput.value = ''; paintGrid(); } }),
+      ]));
+      return;
+    }
     gridEl.replaceChildren(...list.map(renderCard));
   }
 
-  async function removeItem(item, button) {
-    if (!window.confirm(`确定删除「${item.name || '这件单品'}」吗？`)) return;
-    button.disabled = true;
-    try {
-      await api(`/api/wardrobe/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-      toast('已删除');
-      await loadItems();
-    } catch (error) {
-      button.disabled = false;
-      toast(errorText(error));
-    }
-  }
-
   // ---- 搜索 ----
-  function clearSearch() {
-    state.view = 'all';
-    state.searchQuery = '';
-    state.searchResults = [];
-    searchInput.value = '';
-    paintGrid();
-  }
-
   async function runSearch() {
     const query = searchInput.value.trim();
     if (!query) {
-      toast('请输入搜索词');
+      state.view = 'all';
+      state.searchQuery = '';
+      state.searchResults = [];
+      paintGrid();
       return;
     }
-    searchBtn.disabled = true;
-    searchBtn.textContent = '搜索中…';
+    searchInput.disabled = true;
     try {
       const payload = await api('/api/wardrobe/search', { method: 'POST', body: { query } });
       state.searchResults = Array.isArray(payload.results) ? payload.results : [];
@@ -209,13 +311,12 @@ export function renderWardrobe(root, ctx) {
     } catch (error) {
       toast(errorText(error));
     } finally {
-      searchBtn.disabled = false;
-      searchBtn.textContent = '搜索';
+      searchInput.disabled = false;
       paintGrid();
     }
   }
 
-  // ---- 上传入橱 ----
+  // ---- 上传 ----
   fileInput.addEventListener('change', () => {
     const file = fileInput.files?.[0];
     fileInput.value = '';
@@ -234,352 +335,14 @@ export function renderWardrobe(root, ctx) {
     reader.readAsDataURL(file);
   });
 
-  function openUploadModal(dataUrl, filename) {
-    modalHost.replaceChildren();
-    modalHost.hidden = false;
-
-    const baseName = String(filename || '').replace(/\.[^.]+$/, '').slice(0, 40);
-    const nameInput = h('input', { type: 'text', class: 'search', maxlength: '40', value: baseName, placeholder: '给这件单品起个名字' });
-    const cascade = createCascadeSelect({
-      groups: CASCADE_GROUPS,
-      value: 'top',
-      placeholder: '选择大类',
-      subPlaceholder: '选择子类',
-      ariaLabel: '这件单品的类目',
-    });
-    const errEl = h('p', { class: 'error-text', hidden: true });
-    const submit = h('button', { type: 'button', class: 'btn btn--primary', text: '加入衣橱' });
-    const cancel = h('button', { type: 'button', class: 'btn', text: '取消' });
-
-    function close() {
-      modalHost.replaceChildren();
-      modalHost.hidden = true;
-    }
-
-    cancel.addEventListener('click', close);
-    submit.addEventListener('click', async () => {
-      const name = nameInput.value.trim();
-      if (!name) {
-        errEl.textContent = '请填写单品名称';
-        errEl.hidden = false;
-        nameInput.focus();
-        return;
-      }
-      submit.disabled = true;
-      cancel.disabled = true;
-      submit.textContent = '上传中…';
-      errEl.hidden = true;
-      try {
-        await api('/api/wardrobe', {
-          method: 'POST',
-          body: {
-            name,
-            category: cascade.getValue(),
-            subtype: cascade.getSubValue(),
-            tags: [],
-            description: '',
-            image: dataUrl,
-            source: 'upload',
-          },
-        });
-        close();
-        toast('已加入衣橱');
-        await loadItems();
-      } catch (error) {
-        errEl.textContent = errorText(error);
-        errEl.hidden = false;
-        submit.disabled = false;
-        cancel.disabled = false;
-        submit.textContent = '加入衣橱';
-      }
-    });
-
-    const overlay = h('div', { class: 'modal-overlay' }, [
-      h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '加入衣橱' }, [
-        h('h2', { class: 'modal__title', text: '加入衣橱' }),
-        h('div', { class: 'modal__preview' }, [h('img', { src: dataUrl, alt: '待上传单品' })]),
-        h('div', { class: 'field' }, [
-          h('span', { class: 'field__label', text: '单品名称' }),
-          nameInput,
-        ]),
-        h('div', { class: 'field' }, [
-          h('span', { class: 'field__label', text: '类目' }),
-          cascade.el,
-        ]),
-        errEl,
-        h('div', { class: 'modal__actions' }, [cancel, submit]),
-      ]),
-    ]);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close();
-    });
-    modalHost.append(overlay);
-    nameInput.focus();
-  }
-
-  // ---- 编辑已有单品（名称 / 类目） ----
-  function openEditModal(item) {
-    modalHost.replaceChildren();
-    modalHost.hidden = false;
-
-    const nameInput = h('input', { type: 'text', class: 'search', maxlength: '40', value: item.name || '', placeholder: '给这件单品起个名字' });
-    const cascade = createCascadeSelect({
-      groups: CASCADE_GROUPS,
-      value: SLOT_BY_KEY[item.category] ? item.category : 'top',
-      subValue: item.subtype || '',
-      placeholder: '选择大类',
-      subPlaceholder: '选择子类',
-      ariaLabel: '这件单品的类目',
-    });
-    const errEl = h('p', { class: 'error-text', hidden: true });
-    const submit = h('button', { type: 'button', class: 'btn btn--primary', text: '保存' });
-    const cancel = h('button', { type: 'button', class: 'btn', text: '取消' });
-
-    function close() {
-      modalHost.replaceChildren();
-      modalHost.hidden = true;
-    }
-
-    cancel.addEventListener('click', close);
-    submit.addEventListener('click', async () => {
-      const name = nameInput.value.trim();
-      if (!name) {
-        errEl.textContent = '请填写单品名称';
-        errEl.hidden = false;
-        nameInput.focus();
-        return;
-      }
-      submit.disabled = true;
-      cancel.disabled = true;
-      submit.textContent = '保存中…';
-      errEl.hidden = true;
-      try {
-        await api(`/api/wardrobe/${encodeURIComponent(item.id)}`, {
-          method: 'PATCH',
-          body: {
-            name,
-            category: cascade.getValue(),
-            subtype: cascade.getSubValue(),
-          },
-        });
-        close();
-        toast('已保存');
-        await loadItems();
-      } catch (error) {
-        errEl.textContent = errorText(error);
-        errEl.hidden = false;
-        submit.disabled = false;
-        cancel.disabled = false;
-        submit.textContent = '保存';
-      }
-    });
-
-    const overlay = h('div', { class: 'modal-overlay' }, [
-      h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': '编辑单品' }, [
-        h('h2', { class: 'modal__title', text: '编辑单品' }),
-        h('div', { class: 'modal__preview' }, [h('img', { src: thumbSrc(item), alt: item.name || '衣橱单品' })]),
-        h('div', { class: 'field' }, [
-          h('span', { class: 'field__label', text: '单品名称' }),
-          nameInput,
-        ]),
-        h('div', { class: 'field' }, [
-          h('span', { class: 'field__label', text: '类目' }),
-          cascade.el,
-        ]),
-        errEl,
-        h('div', { class: 'modal__actions' }, [cancel, submit]),
-      ]),
-    ]);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close();
-    });
-    modalHost.append(overlay);
-    nameInput.focus();
-  }
-
-  // ---- 从商品链接导入（弹窗） ----
-  function openImportModal() {
-    modalHost.replaceChildren();
-    modalHost.hidden = false;
-
-    const link = { source: null, selected: -1, loading: false };
-
-    const urlInput = h('input', { type: 'text', class: 'search', placeholder: '粘贴淘宝 / 京东 / 拼多多 / 抖音商品链接', 'aria-label': '商品链接' });
-    const parseBtn = h('button', { type: 'button', class: 'btn btn--primary', text: '解析链接' });
-    parseBtn.disabled = true;
-    const errEl = h('p', { class: 'error-text', hidden: true });
-    const resultsEl = h('div', { class: 'import' });
-    const nameInput = h('input', { type: 'text', class: 'search', maxlength: '40', placeholder: '给这件单品起个名字' });
-    const cascade = createCascadeSelect({
-      groups: CASCADE_GROUPS,
-      value: 'top',
-      placeholder: '选择大类',
-      subPlaceholder: '选择子类',
-      ariaLabel: '这件单品的类目',
-    });
-    const detailEl = h('div', { class: 'import', hidden: true }, [
-      h('div', { class: 'field' }, [h('span', { class: 'field__label', text: '单品名称' }), nameInput]),
-      h('div', { class: 'field' }, [h('span', { class: 'field__label', text: '类目' }), cascade.el]),
-    ]);
-    const submit = h('button', { type: 'button', class: 'btn btn--primary', text: '加入衣橱' });
-    submit.disabled = true;
-    const cancel = h('button', { type: 'button', class: 'btn', text: '关闭' });
-
-    function close() {
-      modalHost.replaceChildren();
-      modalHost.hidden = true;
-    }
-
-    function thumbUrl(image) {
-      return `/api/sources/${link.source.id}/${image.index}`;
-    }
-
-    function updateSubmit() {
-      submit.disabled = !(link.source && link.selected >= 0);
-    }
-
-    function paintResults() {
-      resultsEl.replaceChildren();
-      const source = link.source;
-      if (!source) return;
-      resultsEl.append(
-        h('div', { class: 'import__head' }, [
-          h('span', { class: 'tag', text: source.platformLabel || source.platform || '商品' }),
-          h('span', { class: 'import__title', text: source.title || '商品图' }),
-          h('span', { class: 'field__hint', text: `共 ${source.images.length} 张，选一张加入衣橱` }),
-        ]),
-        h('div', { class: 'import__grid' }, source.images.map((image) => {
-          const selected = image.index === link.selected;
-          const thumb = h('button', {
-            type: 'button',
-            class: `import__thumb${selected ? ' is-active' : ''}`,
-            'aria-pressed': selected ? 'true' : 'false',
-            'aria-label': `选择第 ${image.index + 1} 张图`,
-          }, [
-            h('img', { src: thumbUrl(image), alt: `商品图 ${image.index + 1}` }),
-            selected ? h('span', { class: 'thumb__check', 'aria-hidden': 'true', text: '✓' }) : null,
-          ]);
-          thumb.addEventListener('click', () => {
-            link.selected = image.index;
-            paintResults();
-            updateSubmit();
-          });
-          return thumb;
-        })),
-      );
-    }
-
-    async function parse() {
-      const url = urlInput.value.trim();
-      if (!url || link.loading) return;
-      link.loading = true;
-      errEl.hidden = true;
-      parseBtn.disabled = true;
-      parseBtn.textContent = '解析中…';
-      try {
-        const payload = await api('/api/sources', { method: 'POST', body: { url } });
-        const source = payload.source;
-        if (!source || !Array.isArray(source.images) || source.images.length === 0) {
-          throw new Error('没有解析到商品图，换一个链接试试');
-        }
-        link.source = source;
-        link.selected = source.images[0].index;
-        if (!nameInput.value.trim()) nameInput.value = String(source.title || '').slice(0, 40);
-        detailEl.hidden = false;
-        paintResults();
-        updateSubmit();
-      } catch (error) {
-        link.source = null;
-        link.selected = -1;
-        detailEl.hidden = true;
-        resultsEl.replaceChildren();
-        errEl.textContent = errorText(error);
-        errEl.hidden = false;
-        updateSubmit();
-      } finally {
-        link.loading = false;
-        parseBtn.disabled = !urlInput.value.trim();
-        parseBtn.textContent = '解析链接';
-      }
-    }
-
-    urlInput.addEventListener('input', () => {
-      parseBtn.disabled = link.loading || !urlInput.value.trim();
-    });
-    urlInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !parseBtn.disabled) void parse();
-    });
-    parseBtn.addEventListener('click', () => void parse());
-    cancel.addEventListener('click', close);
-
-    submit.addEventListener('click', async () => {
-      const source = link.source;
-      if (!source || link.selected < 0) return;
-      const name = nameInput.value.trim();
-      if (!name) {
-        errEl.textContent = '请填写单品名称';
-        errEl.hidden = false;
-        nameInput.focus();
-        return;
-      }
-      submit.disabled = true;
-      cancel.disabled = true;
-      submit.textContent = '加入中…';
-      errEl.hidden = true;
-      try {
-        await api('/api/wardrobe', {
-          method: 'POST',
-          body: {
-            sourceId: source.id,
-            sourceIndex: link.selected,
-            name,
-            category: cascade.getValue(),
-            subtype: cascade.getSubValue(),
-          },
-        });
-        toast('已加入衣橱');
-        await loadItems();
-        close();
-      } catch (error) {
-        errEl.textContent = errorText(error);
-        errEl.hidden = false;
-        submit.disabled = false;
-        cancel.disabled = false;
-        submit.textContent = '加入衣橱';
-      }
-    });
-
-    const overlay = h('div', { class: 'modal-overlay' }, [
-      h('div', { class: 'modal modal--wide', role: 'dialog', 'aria-modal': 'true', 'aria-label': '从商品链接导入' }, [
-        h('h2', { class: 'modal__title', text: '从商品链接导入' }),
-        h('div', { class: 'field' }, [
-          h('span', { class: 'field__label', text: '商品链接' }),
-          h('div', { class: 'inline-field' }, [urlInput, parseBtn]),
-          h('span', { class: 'field__hint', text: '支持淘宝 / 天猫、京东、拼多多的单件商品链接，以及抖音商城的商品分享链接。博主橱窗或主页链接暂不支持——需要平台授权，请点进具体商品再复制链接。' }),
-          errEl,
-        ]),
-        resultsEl,
-        detailEl,
-        h('div', { class: 'modal__actions' }, [cancel, submit]),
-      ]),
-    ]);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close();
-    });
-    modalHost.append(overlay);
-    urlInput.focus();
-  }
-
   // ---- 今日穿搭 ----
   function piecesFromSuggestion() {
     const slots = state.suggestion?.slots || {};
     const pieces = [];
-    for (const key of SLOT_ORDER) {
-      const value = slots[key];
+    for (const [key, value] of Object.entries(slots)) {
       const list = Array.isArray(value) ? value : value ? [value] : [];
       for (const item of list) {
-        if (!item || !item.id) continue;
-        pieces.push({ slot: key, source: { kind: 'wardrobe', wardrobeId: item.id } });
+        if (item?.id) pieces.push({ slot: key, subtype: item.subtype || '', source: { kind: 'wardrobe', wardrobeId: item.id } });
       }
     }
     return pieces;
@@ -589,11 +352,11 @@ export function renderWardrobe(root, ctx) {
     const first = items[0];
     const names = items.map((item) => item.name || '未命名单品').join('、');
     return h('div', { class: 'stylist__slot' }, [
-      h('div', { class: 'stylist__slot-thumb' }, [
-        h('img', { src: thumbSrc(first), alt: names || slotLabel(key) }),
+      h('div', { class: 'stylist__slot-thumb' }, [h('img', { src: thumbSrc(first), alt: names || slotLabel(key) })]),
+      h('div', { class: 'stylist__slot-text' }, [
+        h('span', { class: 'stylist__slot-cat', text: slotLabel(key) }),
+        h('span', { class: 'stylist__slot-name', text: names }),
       ]),
-      h('span', { class: 'stylist__slot-cat', text: slotLabel(key) }),
-      h('span', { class: 'stylist__slot-name', text: names }),
     ]);
   }
 
@@ -601,39 +364,34 @@ export function renderWardrobe(root, ctx) {
     suggestionEl.replaceChildren();
     const suggestion = state.suggestion;
     if (!suggestion) {
-      suggestionEl.append(h('p', { class: 'field__hint', text: '还没有搭配建议，上面输入需求点「帮我选」。' }));
+      suggestionEl.append(h('p', { class: 'field__hint', text: '还没有搭配建议，写下今天的场合或感觉，再点「帮我选」。' }));
       updateOrderButton();
       return;
     }
     const slots = suggestion.slots || {};
-    const entries = SLOT_ORDER.filter((key) => {
+    const entries = Object.keys(slots).filter((key) => {
       const value = slots[key];
       return Array.isArray(value) ? value.length > 0 : Boolean(value);
     });
     if (entries.length === 0) {
       suggestionEl.append(h('p', { class: 'field__hint', text: '衣橱里暂时没有能组成一套的单品，先上传或导入几件吧。' }));
     } else {
-      suggestionEl.append(h('div', { class: 'stylist__slots' }, entries.map((key) => {
-        const value = slots[key];
-        return renderSlot(key, Array.isArray(value) ? value : [value]);
-      })));
+      suggestionEl.append(h('div', { class: 'stylist__slots' }, entries.map((key) => renderSlot(key, Array.isArray(slots[key]) ? slots[key] : [slots[key]]))));
     }
-    if (suggestion.reason) {
-      suggestionEl.append(h('p', { class: 'stylist__reason', text: suggestion.reason }));
-    }
+    if (suggestion.reason) suggestionEl.append(h('p', { class: 'stylist__reason', text: suggestion.reason }));
     const missing = Array.isArray(suggestion.missing) ? suggestion.missing.filter((key) => SLOT_BY_KEY[key]) : [];
-    if (missing.length) {
-      suggestionEl.append(h('p', { class: 'stylist__missing', text: `衣柜里还缺：${missing.map(slotLabel).join('、')}，可先补充再生成。` }));
-    }
+    if (missing.length) suggestionEl.append(h('p', { class: 'stylist__missing', text: `衣橱里还缺：${missing.map(slotLabel).join('、')}，可先补充再生成。` }));
     updateOrderButton();
   }
 
   async function suggest() {
     const request = requestInput.value.trim();
     if (!request) {
-      toast('用一句话说说你今天想穿什么');
+      toast('用一句话说说今天想穿什么');
+      requestInput.focus();
       return;
     }
+    if (suggestBtn.disabled) return;
     suggestBtn.disabled = true;
     suggestBtn.textContent = '帮你挑…';
     try {
@@ -652,10 +410,7 @@ export function renderWardrobe(root, ctx) {
     }
   }
 
-  /**
-   * 状态行：文案与转圈一起设置。
-   * 只改文字不改转圈会出现「按钮已禁用、页面一动不动」的观感（用户原话「完全不转」）。
-   */
+  /** 状态行：文案与转圈一起设置，避免「按钮禁用但页面一动不动」。 */
   function setStatus(text, spinning = false) {
     orderStatus.hidden = !text;
     orderStatusText.textContent = text ?? '';
@@ -663,25 +418,22 @@ export function renderWardrobe(root, ctx) {
   }
 
   function updateOrderButton() {
-    const pieces = piecesFromSuggestion();
     const pending = state.stylistBusy || state.order?.status === 'pending';
-    orderBtn.disabled = pending || pieces.length === 0;
+    orderBtn.disabled = pending || piecesFromSuggestion().length === 0;
     orderBtn.textContent = pending ? '生成中…' : '生成试穿图';
   }
 
-  /** 人物照的三种状态：没有 / 内置模特 / 用户自己的照片。 */
   function paintPerson() {
-    if (state.person) {
-      personPreview.src = state.person;
-      personPreview.hidden = false;
-      personNote.hidden = false;
-      personNote.textContent = state.personIsDefault ? '内置模特' : '你的照片';
-      personBtn.textContent = state.personIsDefault ? '换成我的照片' : '更换全身照';
-    } else {
-      personPreview.hidden = true;
-      personNote.hidden = true;
-      personBtn.textContent = '上传全身照';
+    const show = Boolean(state.person);
+    for (const [image, note] of [[personPreview, null], [stylistPersonPreview, personNote]]) {
+      image.hidden = !show;
+      if (show) image.src = state.person;
+      if (note) {
+        note.hidden = !show;
+        note.textContent = state.personIsDefault ? '内置模特' : '你的照片';
+      }
     }
+    personBtn.textContent = state.personIsDefault ? '换成我的照片' : show ? '更换全身照' : '上传全身照';
     updateOrderButton();
   }
 
@@ -695,10 +447,7 @@ export function renderWardrobe(root, ctx) {
     const order = state.order;
     if (order?.status === 'pending') {
       resultEl.append(
-        h('div', { class: 'stage' }, [
-          h('span', { class: 'spinner' }),
-          h('span', { text: STAGE_TEXT[state.job?.stage] ?? STAGE_TEXT.generating }),
-        ]),
+        h('div', { class: 'stage' }, [h('span', { class: 'spinner' }), h('span', { text: STAGE_TEXT[state.job?.stage] ?? STAGE_TEXT.generating })]),
         h('p', { class: 'result__meta', text: '生成通常需要 20–60 秒，请不要关闭页面。' }),
       );
       return;
@@ -708,12 +457,7 @@ export function renderWardrobe(root, ctx) {
     resultEl.append(
       h('div', { class: 'stylist__result-img' }, [h('img', { src: url, alt: '搭配试穿效果' })]),
       h('p', { class: 'ai-note', text: 'AI 生成效果仅供参考，实物以商品页面描述为准' }),
-      h('a', {
-        class: 'btn btn--block',
-        href: url,
-        download: '今日穿搭-AI生成.jpg',
-        text: '下载效果图（含 AI 标识）',
-      }),
+      h('a', { class: 'btn btn--block', href: url, download: '今日穿搭-AI生成.jpg', text: '下载效果图（含 AI 标识）' }),
     );
   }
 
@@ -729,7 +473,7 @@ export function renderWardrobe(root, ctx) {
       if (state.pollTicks > POLL_MAX_TICKS) {
         stopPolling();
         state.stylistBusy = false;
-        setStatus('生成超时，请稍后在「订单与说明」查看结果。');
+        setStatus('生成超时，请稍后在「试穿记录」查看结果。');
         updateOrderButton();
         return;
       }
@@ -741,9 +485,8 @@ export function renderWardrobe(root, ctx) {
           const res = await api(`/api/orders/${state.order.id}`);
           state.order = res.order;
           state.stylistBusy = false;
-          if (payload.status === 'failed') {
-            setStatus(state.order?.errorMessage || '生成失败，本次不扣费。');
-          } else {
+          if (payload.status === 'failed') setStatus(state.order?.errorMessage || '生成失败，本次不扣费。');
+          else {
             setStatus('');
             paintResult();
           }
@@ -756,7 +499,7 @@ export function renderWardrobe(root, ctx) {
       } catch {
         stopPolling();
         state.stylistBusy = false;
-        setStatus('网络中断，未能确认结果，可稍后在「订单与说明」查看。');
+        setStatus('网络中断，未能确认结果，可稍后在「试穿记录」查看。');
         updateOrderButton();
       }
     }, POLL_INTERVAL);
@@ -801,13 +544,7 @@ export function renderWardrobe(root, ctx) {
           /* 拿不到默认模型就不带 model，交给后端默认 */
         }
       }
-      const body = {
-        sessionId,
-        person: state.person,
-        fit: 'regular',
-        prompt: '',
-        pieces,
-      };
+      const body = { sessionId, person: state.person, fit: 'regular', prompt: '', pieces };
       if (model) body.model = model;
       const payload = await api('/api/orders', { method: 'POST', body });
       const orderId = payload.order?.id ?? payload.orderId;
@@ -818,7 +555,6 @@ export function renderWardrobe(root, ctx) {
       setStatus(STAGE_TEXT.queued, true);
       updateOrderButton();
       paintResult();
-      // 结果区通常在首屏之外：不主动滚过去，用户只会看到按钮变灰而页面「一动不动」。
       orderStatus.scrollIntoView({ behavior: 'smooth', block: 'center' });
       pollJob(payload.jobId);
     } catch (error) {
@@ -829,9 +565,15 @@ export function renderWardrobe(root, ctx) {
     }
   }
 
-  // ---- 事件绑定 ----
-  searchBtn.addEventListener('click', () => void runSearch());
-  searchClear.addEventListener('click', clearSearch);
+  // ---- 事件 ----
+  searchInput.addEventListener('input', () => {
+    if (!searchInput.value.trim() && state.view === 'search') {
+      state.view = 'all';
+      state.searchQuery = '';
+      state.searchResults = [];
+      paintGrid();
+    }
+  });
   searchInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void runSearch();
   });
@@ -858,55 +600,71 @@ export function renderWardrobe(root, ctx) {
       state.person = String(reader.result);
       state.personIsDefault = false;
       paintPerson();
-      updateOrderButton();
     };
     reader.onerror = () => toast('读取图片失败，请重试');
     reader.readAsDataURL(file);
   });
+  goStudio.addEventListener('click', goToStudio);
+  mobileGoStudio.addEventListener('click', goToStudio);
 
-  // ---- 组装页面 ----
+  // ---- 组装 ----
   root.append(
-    h('section', { class: 'page-head wardrobe-head' }, [
-      h('div', {}, [
-        h('h1', { class: 'page-title', text: '我的衣橱' }),
-        h('p', { class: 'page-sub', text: '把常穿的单品收进来，搭配与试穿都更快。' }),
-      ]),
+    h('section', { class: 'page-head' }, [
+      h('div', {}, [h('h1', { class: 'page-title', text: '我的衣橱' }), h('p', { class: 'page-sub', text: '把常穿的单品收进来，挑一套就能看到上身效果。' })]),
       h('div', { class: 'wardrobe-head__actions' }, [
-        h('button', { type: 'button', class: 'btn', text: '链接导入', onclick: () => openImportModal() }),
-        h('button', { type: 'button', class: 'btn btn--primary', text: '上传图片', onclick: () => fileInput.click() }),
+        h('button', { type: 'button', class: 'btn', onclick: () => openImportModal() }, [icon('link'), '链接导入']),
+        h('button', { type: 'button', class: 'btn btn--primary', onclick: () => fileInput.click() }, [icon('plus'), '上传单品']),
+        fileInput,
       ]),
-      fileInput,
     ]),
-    h('section', { class: 'card wardrobe-search' }, [
-      h('div', { class: 'inline-field' }, [searchInput, searchBtn, searchClear]),
-    ]),
-    h('section', { class: 'card' }, [
-      h('h2', { class: 'section__title', text: '衣橱单品' }),
-      gridEl,
-    ]),
-    h('section', { class: 'card stylist' }, [
-      h('h2', { class: 'section__title' }, [
-        '今日穿搭',
-        h('span', { class: 'section__hint', text: '一句话说需求，从衣橱里帮你搭一套' }),
+    h('div', { class: 'wardrobe-page' }, [
+      h('section', { class: 'closet' }, [
+        h('div', { class: 'wardrobe-toolbar' }, [
+          h('div', { class: 'wardrobe-toolbar__main' }, [filtersEl, h('div', { class: 'search-field' }, [icon('search'), searchInput])]),
+          countEl,
+        ]),
+        gridEl,
+        h('section', { class: 'card stylist' }, [
+          h('div', { class: 'card__head' }, [
+            h('div', { class: 'card__heading' }, [h('h2', { class: 'section__title', text: '今日穿搭' }), h('p', { class: 'section__hint', text: '说说场合或感觉，让 AI 从衣橱里帮你搭一套。' })]),
+            h('span', { class: 'tag' }, [icon('sparkle'), 'AI 选搭']),
+          ]),
+          h('div', { class: 'inline-field' }, [requestInput, suggestBtn]),
+          suggestionEl,
+          h('div', { class: 'stylist__order' }, [
+            h('div', { class: 'stylist__person' }, [stylistPersonPreview, h('div', {}, [personNote, personBtn]), personInput]),
+            h('span', { class: 'push-end' }, [orderBtn]),
+          ]),
+          orderStatus,
+          resultEl,
+        ]),
       ]),
-      h('div', { class: 'inline-field' }, [requestInput, suggestBtn]),
-      suggestionEl,
-      h('div', { class: 'stylist__order' }, [
-        h('div', { class: 'stylist__person' }, [personBtn, personPreview, personNote, personInput]),
-        h('span', { class: 'push-end' }, [orderBtn]),
+      h('aside', { class: 'wardrobe-aside' }, [
+        h('section', { class: 'panel wardrobe-person' }, [
+          personPreview,
+          h('span', { class: 'canvas__label', text: '人物原图' }),
+          h('p', { class: 'field__hint', text: '人物原图仅供当前搭配参考；生成结果后可对比查看。' }),
+        ]),
+        h('section', { class: 'panel wardrobe-picks' }, [
+          h('div', { class: 'card__head' }, [h('h2', { class: 'section__title', text: '当前搭配' }), selectionCount]),
+          selectionEl,
+          goStudio,
+          h('p', { class: 'field__hint', text: '选好的单品会直接带进工作台，仍需确认版型与生成。' }),
+        ]),
       ]),
-      orderStatus,
-      resultEl,
+    ]),
+    h('div', { class: 'wardrobe-mobile-actions' }, [
+      h('button', { type: 'button', class: 'btn btn--ghost', onclick: openSelection }, [icon('wardrobe'), mobileSelectionCount]),
+      mobileGoStudio,
     ]),
     modalHost,
   );
 
   paintGrid();
+  paintSelection();
   paintSuggestion();
   paintPerson();
   void loadItems();
-
-  // 内置模特：进页面就把全身照填好，用户不传照片也能直接生成试穿图。
   void loadDefaultPerson().then((dataUrl) => {
     if (!dataUrl || state.person || !root.isConnected) return;
     state.person = dataUrl;

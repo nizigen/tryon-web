@@ -1,448 +1,141 @@
-/* ============================================================
-   衣橱 / 导入 / 设置 · 新增样式
-   只承载 v4 三个页面新增的区块，通用令牌与组件沿用 style.css。
-   ============================================================ */
-
-/* ---------------- 我的衣橱：标题栏 ---------------- */
-
-.wardrobe-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
+/* Wardrobe, stylist, dialogs and secondary pages for the approved B+A direction. */
+.wardrobe-head__actions, .page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wardrobe-head__actions .btn, .page-actions .btn { gap: 8px; }
+.wardrobe-head__actions .icon, .page-actions .icon { width: 18px; height: 18px; }
+.wardrobe-page { display: grid; grid-template-columns: minmax(0, 1fr) 292px; gap: 28px; align-items: start; }
+.closet { min-width: 0; }
+.wardrobe-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 20px; flex-wrap: wrap; }
+.wardrobe-toolbar__main { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; flex: 1; flex-wrap: wrap; }
+.wardrobe-toolbar__count { font-size: 12px; color: var(--muted); white-space: nowrap; padding-top: 12px; }
+.search-field { position: relative; flex: 1 1 260px; max-width: 380px; min-width: 200px; }
+.search-field > .icon { position: absolute; left: 12px; top: 12px; color: var(--muted); width: 18px; height: 18px; }
+.search-field > input { padding-left: 38px; background: var(--surface); }
+.wardrobe-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 18px; }
+.wardrobe-card { min-width: 0; position: relative; }
+.wardrobe-card__thumb { display: block; width: 100%; aspect-ratio: 1 / 1.12; background: var(--panel); border: 1px solid transparent; border-radius: 10px; padding: 16px; position: relative; transition: border-color .15s, background-color .15s; }
+.wardrobe-card__thumb:hover { border-color: var(--line-strong); }
+.wardrobe-card__thumb img { width: 100%; height: 100%; object-fit: contain; }
+.wardrobe-card.is-selected .wardrobe-card__thumb { border: 2px solid var(--accent-1); padding: 15px; background: var(--accent-soft); }
+.wardrobe-card__check { position: absolute; top: 10px; left: 10px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: var(--accent-1); color: #fff; }
+.wardrobe-card__check .icon { width: 15px; height: 15px; }
+.wardrobe-card__body { display: flex; align-items: flex-start; gap: 4px; margin-top: 10px; }
+.wardrobe-card__text { flex: 1; min-width: 0; padding-top: 2px; }
+.wardrobe-card__name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wardrobe-card__cat { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.wardrobe-card__body .actions-menu { margin-top: -10px; }
+.wardrobe-card__skeleton { min-height: 280px; }
+.wardrobe-empty { grid-column: 1 / -1; display: grid; justify-items: center; gap: 12px; padding: 44px 20px; text-align: center; background: var(--surface); border: 1px dashed var(--line-strong); border-radius: 12px; }
+.wardrobe-empty__icon { color: var(--muted); }
+.wardrobe-empty__icon .icon { width: 32px; height: 32px; }
+.wardrobe-empty__title { font-size: 16px; font-weight: 600; }
+.wardrobe-empty__actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.wardrobe-aside { display: grid; gap: 16px; position: sticky; top: 108px; align-self: start; }
+.wardrobe-person { position: relative; padding: 0; overflow: hidden; background: var(--panel); }
+.wardrobe-mobile-actions { display: none; }
+.wardrobe-person__image { width: 100%; height: 300px; object-fit: contain; }
+.wardrobe-person .canvas__label { top: 12px; left: 12px; }
+.wardrobe-person .field__hint { padding: 12px 14px; border-top: 1px solid var(--line); }
+.wardrobe-picks { padding: 16px; }
+.wardrobe-picks .card__head { margin-bottom: 10px; }
+.wardrobe-picks .section__title { font-size: 15px; }
+.selection-list { display: grid; gap: 2px; }
+.selection-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.selection-item:last-child { border-bottom: 0; }
+.selection-item__thumb { width: 44px; height: 54px; flex: none; object-fit: contain; background: var(--bg); border-radius: 6px; padding: 3px; }
+.selection-item__text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.selection-item__name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.selection-item__meta { font-size: 11px; color: var(--muted); }
+.selection-item .icon-button { min-width: 44px; min-height: 44px; }
+.wardrobe-picks .field__hint { margin-top: 10px; }
+.wardrobe-picks .btn { margin-top: 12px; }
+.stylist { margin-top: 28px; }
+.stylist .inline-field { margin-top: 16px; }
+.stylist .inline-field > input { flex: 1 1 240px; }
+.stylist__result { margin-top: 16px; }
+.stylist__slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.stylist__slot { display: flex; align-items: center; gap: 10px; padding: 8px; background: var(--bg); border-radius: 8px; min-width: 0; }
+.stylist__slot-thumb { width: 44px; height: 54px; flex: none; background: var(--surface); border-radius: 6px; padding: 3px; }
+.stylist__slot-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.stylist__slot-text { display: grid; gap: 2px; min-width: 0; }
+.stylist__slot-cat { font-size: 11px; color: var(--muted); }
+.stylist__slot-name { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.stylist__reason { margin-top: 12px; font-size: 13px; color: var(--ink); }
+.stylist__missing { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.stylist__order { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.stylist__person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.stylist__person-preview { width: 44px; height: 56px; object-fit: cover; object-position: top; border-radius: 6px; background: var(--bg); }
+.stylist__person-note { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.stylist__status { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 13px; }
+.stylist__result-img-wrap { margin-top: 16px; }
+.stylist__result-img { background: var(--panel); border-radius: 10px; padding: 12px; display: grid; place-items: center; }
+.stylist__result-img img { max-height: 520px; width: auto; max-width: 100%; object-fit: contain; }
+.stylist__result-img-wrap .ai-note { margin-top: 10px; }
+.stylist__result-img-wrap .btn { margin-top: 10px; }
+/* Dialogs */
+.modal-host { position: static; }
+.modal { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: calc(100dvh - 40px); background: var(--surface); }
+.modal__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px 12px 22px; border-bottom: 1px solid var(--line); }
+.modal__title { font-size: 17px; font-weight: 600; }
+.modal__content { padding: 20px 22px; display: grid; gap: 16px; overflow: auto; min-height: 0; }
+.modal__preview { display: flex; justify-content: center; background: var(--bg); border-radius: 10px; padding: 14px; }
+.modal__preview img { width: 120px; height: 150px; object-fit: contain; }
+.modal__details { display: grid; gap: 16px; }
+.modal--wide { max-height: calc(100dvh - 40px); }
+.modal--wide .modal__content { gap: 14px; }
+.modal .import__grid { max-height: 300px; overflow: auto; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--bg); }
+.modal__actions { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--surface); }
+.btn--danger { background: var(--negative); border-color: var(--negative); color: #fff; }
+.btn--danger:hover:not(:disabled) { background: #992929; border-color: #992929; }
+.modal .field__hint { line-height: 1.7; }
+.modal .import__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.modal .import__title { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+/* Settings login rows */
+.login-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; min-height: 64px; }
+.login-row:last-of-type { border-bottom: 0; }
+.login-row__label { font-size: 13px; font-weight: 500; min-width: 90px; }
+.login-row__action { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.login-row__status { font-size: 12px; color: var(--muted); }
+.login-row__hint { margin-left: auto; }
+.modal-host:empty { display: none; }
+@media (max-width: 1120px) {
+  .wardrobe-page { grid-template-columns: minmax(0, 1fr) 260px; gap: 22px; }
+  .wardrobe-person__image { height: 260px; }
+  .wardrobe-grid { gap: 22px 14px; }
 }
-
-.wardrobe-head__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
+@media (max-width: 850px) {
+  .wardrobe-page { grid-template-columns: minmax(0, 1fr); }
+  .wardrobe-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .wardrobe-aside { display: none; }
+  .wardrobe-mobile-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; position: fixed; left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 25; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  .wardrobe-mobile-actions > .btn--primary { flex: 1; }
+  .view-root[data-view="wardrobe"] { padding-bottom: 190px; }
+  .wardrobe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .wardrobe-toolbar__count { padding-top: 0; }
 }
-
-/* ---------------- 衣橱：网格与卡片 ---------------- */
-
-.wardrobe-search {
-  margin-bottom: 16px;
-}
-
-.wardrobe-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 14px;
-  margin-top: 4px;
-}
-
-.wardrobe-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  background: var(--panel);
-  border: 0;
-  border-radius: var(--radius-panel);
-  overflow: hidden;
-}
-
-.wardrobe-card__thumb {
-  aspect-ratio: 3 / 4;
-  background: var(--panel-3);
-  overflow: hidden;
-}
-
-.wardrobe-card__thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.wardrobe-card__body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px 12px;
-}
-
-.wardrobe-card__name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wardrobe-card__cat {
-  align-self: flex-start;
-  font-size: 12px;
-  color: var(--muted);
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--accent-soft);
-  border: 1px solid var(--line);
-}
-
-.wardrobe-card__edit {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  background: rgba(28, 26, 23, .55);
-  color: #fff;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background-color .16s ease, border-color .16s ease;
-}
-
-.wardrobe-card__edit:hover:not(:disabled) {
-  background: var(--accent-1);
-  border-color: var(--accent-1);
-}
-
-.wardrobe-card__edit:disabled {
-  opacity: .4;
-  cursor: not-allowed;
-}
-
-.wardrobe-card__del {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1px solid var(--line-strong);
-  background: rgba(28, 26, 23, .55);
-  color: #fff;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background-color .16s ease, border-color .16s ease;
-}
-
-.wardrobe-card__del:hover:not(:disabled) {
-  background: var(--negative);
-  border-color: var(--negative);
-}
-
-.wardrobe-card__del:disabled {
-  opacity: .4;
-  cursor: not-allowed;
-}
-
-/* ---------------- 衣橱：空态 ---------------- */
-
-.wardrobe-empty {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  text-align: center;
-  padding: 40px 20px;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-panel);
-  color: var(--muted);
-}
-
-.wardrobe-empty__title {
-  margin: 0;
-  font-size: 15px;
-  color: var(--ink);
-}
-
-.wardrobe-empty__actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-/* ---------------- 上传弹层 ---------------- */
-
-.modal-host {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-}
-
-.modal-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: rgba(0, 0, 0, .68);
-}
-
-.modal {
-  width: 100%;
-  max-width: 420px;
-  max-height: 90vh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 22px;
-  background: var(--surface);
-  border: 0;
-  border-radius: var(--radius-card);
-  box-shadow: 0 24px 60px rgba(28, 26, 23, .22);
-}
-
-.modal__title {
-  margin: 0;
-  font-size: 18px;
-}
-
-.modal--wide {
-  max-width: 560px;
-}
-
-/* 解析出的商品图可能有几十张：网格自身滚动，名称/类目/加入按钮始终可达。 */
-.modal--wide .import__grid {
-  max-height: 260px;
-  overflow-y: auto;
-  padding-right: 6px;
-}
-
-.modal__preview {
-  width: 100%;
-  max-height: 320px;
-  border-radius: var(--radius-ctl);
-  overflow: hidden;
-  background: var(--panel-3);
-}
-
-.modal__preview img {
-  width: 100%;
-  max-height: 320px;
-  object-fit: contain;
-}
-
-.modal__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 4px;
-  /* 内容长时（几十张商品图）按钮仍固定在弹窗底部可见，不用滚到底找「加入衣橱」。 */
-  position: sticky;
-  bottom: 0;
-  background: var(--surface);
-  padding: 10px 0 2px;
-}
-
-/* ---------------- 今日穿搭 ---------------- */
-
-.stylist {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.stylist__result {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.stylist__slots {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: 12px;
-}
-
-.stylist__slot {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-}
-
-.stylist__slot-thumb {
-  aspect-ratio: 1 / 1;
-  border-radius: var(--radius-ctl);
-  overflow: hidden;
-  background: var(--panel-3);
-}
-
-.stylist__slot-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.stylist__slot-cat {
-  align-self: flex-start;
-  font-size: 12px;
-  color: var(--accent-2);
-}
-
-.stylist__slot-name {
-  font-size: 13px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.stylist__reason {
-  margin: 0;
-  font-size: 14px;
-  color: var(--ink);
-  padding: 10px 12px;
-  background: var(--accent-soft);
-  border-radius: var(--radius-ctl);
-}
-
-.stylist__missing {
-  margin: 0;
-  font-size: 13px;
-  color: #92400e;
-}
-
-.stylist__order {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding-top: 4px;
-  border-top: 1px solid var(--line);
-}
-
-.stylist__person {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.stylist__person-note {
-  margin: 0;
-  flex: 0 0 auto;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.stylist__person-preview {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-ctl);
-  object-fit: cover;
-  border: 1px solid var(--line-strong);
-}
-
-.stylist__status {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
-  /* 转圈与文案同一行：等待时两者必须一起出现，否则看起来像页面卡住。 */
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.stylist__result-img-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.stylist__result-img {
-  border-radius: var(--radius-panel);
-  overflow: hidden;
-  background: var(--panel-3);
-}
-
-.stylist__result-img img {
-  width: 100%;
-  max-height: 640px;
-  object-fit: contain;
-}
-
-/* ---------------- 导入页：加入衣橱 ---------------- */
-
-.import__cell {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-.import__cell .import__thumb {
-  width: 100%;
-}
-
-.import__add {
-  width: 100%;
-}
-
-/* ---------------- 设置页：扫码登录行 ---------------- */
-
-.login-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.login-row:last-of-type {
-  border-bottom: 0;
-}
-
-.login-row__label {
-  min-width: 56px;
-  font-size: 14px;
-  color: var(--ink);
-}
-
-.login-row__action {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-  flex-wrap: wrap;
-}
-
-.login-row__status {
-  font-size: 12px;
-  color: var(--muted);
-  max-width: 260px;
-}
-
-.login-row__hint {
-  margin-left: auto;
-}
-
-/* ---------------- 响应式 ---------------- */
-
-@media (max-width: 640px) {
-  .wardrobe-grid {
-    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  }
-
-  .login-row__action {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .stylist__order .push-end {
-    width: 100%;
-  }
+@media (max-width: 620px) {
+  .wardrobe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 12px; }
+  .wardrobe-toolbar { display: grid; gap: 12px; }
+  .search-field { max-width: none; }
+  .wardrobe-toolbar__main { gap: 10px; }
+  .filters { gap: 2px; }
+  .filter { padding: 8px 12px; font-size: 13px; }
+  .wardrobe-card__thumb { padding: 12px; border-radius: 9px; }
+  .wardrobe-card.is-selected .wardrobe-card__thumb { padding: 11px; }
+  .wardrobe-card__name { font-size: 13px; }
+  .wardrobe-card__cat { font-size: 11px; }
+  .wardrobe-card__body .actions-menu { margin-top: -12px; margin-right: -10px; }
+  .wardrobe-empty { padding: 32px 16px; }
+  .stylist { margin-top: 22px; }
+  .stylist__slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stylist__order { display: grid; gap: 12px; }
+  .stylist__order .push-end { margin: 0; }
+  .stylist__order .btn { width: 100%; }
+  .stylist__result-img img { max-height: 380px; }
+  .modal { max-height: calc(100dvh - 24px); }
+  .modal__head { padding: 8px 10px 8px 16px; }
+  .modal__content { padding: 16px; gap: 14px; }
+  .modal__actions { padding: 12px 16px; }
+  .modal__actions .btn { flex: 1; }
+  .modal .import__grid { max-height: 220px; }
+  .login-row__label { min-width: 64px; }
 }

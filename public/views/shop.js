@@ -45,12 +45,11 @@ export function renderShop(root, ctx) {
   }
 
   const importCta = h('button', { type: 'button', class: 'import-cta', onclick: () => ctx.onNavigate('wardrobe') }, [
-    h('span', { class: 'import-cta__icon', 'aria-hidden': 'true', text: '🔗' }),
     h('span', { class: 'import-cta__text' }, [
-      h('strong', { text: '导入商品链接' }),
-      h('span', { text: '在「我的衣橱」里粘贴淘宝 / 京东 / 拼多多 / 抖音商品链接，抓图入橱' }),
+      h('strong', { class: 'import-cta__title', text: '从商品链接添加单品' }),
+      h('span', { class: 'import-cta__text', text: '在「我的衣橱」中粘贴淘宝 / 京东 / 拼多多 / 抖音的单个商品链接。' }),
     ]),
-    h('span', { class: 'import-cta__go', 'aria-hidden': 'true', text: '→' }),
+    h('span', { class: 'tag', text: '去衣橱' }),
   ]);
 
   function paintGrid() {
@@ -79,7 +78,7 @@ export function renderShop(root, ctx) {
       onclick: () => ctx.onOpenProduct(product.id),
     }, [
       h('div', { class: 'product__media' }, [
-        h('img', { src: `/${product.image}`, alt: product.name, loading: 'lazy' }),
+        h('img', { src: `/${product.image}`, alt: product.name }),
       ]),
       h('div', { class: 'product__body' }, [
         h('span', { class: 'product__name', text: product.name }),
@@ -97,7 +96,7 @@ export function renderShop(root, ctx) {
       h('h1', { class: 'page-title', text: '橱窗' }),
       h('p', { class: 'page-sub', text: '挑一件喜欢的单品，上传真人照即可看上身效果。' }),
     ]),
-    h('div', { class: 'shop-bar' }, [search, filters]),
+    h('div', { class: 'shop-toolbar' }, [search, filters]),
     importCta,
     grid,
   );

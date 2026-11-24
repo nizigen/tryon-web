@@ -83,7 +83,8 @@ v5 追加：把本机私有网关（MCP/JSON-RPC 协议）换成通用 OpenAI �
 - [x] 再次快进远端至 `e54b6f1`，纳入衣橱内链接导入弹窗。
 - [x] 解压用户设计参考包，按 vibe-coding 前端轨道和 UI/UX Pro Max 产出 A/B/C 三版可点击预览与三个轻量备选。
 - [x] 预览覆盖工作台、衣橱、今日穿搭入口、设置、记录，以及编辑/删除/导入弹窗；13 个截图场景验证 1440/768/390 无横向溢出。
-- [ ] 用户选择 A/B/C 或组合（入口 `/design-demos/index.html`；证据与边界见 `design/directions.md`、`findings.md`）。
-- [ ] 按选版更新 FRONTEND_GUIDELINES / APP_FLOW / IMPLEMENTATION_PLAN，并在现有 API 与原生 ESM 栈上改造正式页面。
-- [ ] 恢复 OpenCLI 桥接后做真实交互回归、独立代码与视觉评审，运行受影响测试并提交最终实现。
-
+- [x] 用户「按你说的来即可」批准 B 衣橱 + A 工作台，记录在 direction-approved.md。
+- [x] 更新 FRONTEND_GUIDELINES / APP_FLOW / IMPLEMENTATION_PLAN，并在现有 API 与原生 ESM 栈上完成正式页面。
+- [x] 原生 Chromium 真实临时后端交互/落盘回归、四档布局、独立代码/安全/视觉评审；最终 `node --test` 149/149 pass。
+- [x] 重启运行实例，18 个实际 HTTP 源文件逐字节匹配；仅清理自有 3 件验收单品，恢复原衣橱；证据随本轮提交。
+- [ ] OpenCLI 专项复跑：扩展桥接仍缺失，未安装或假称通过；本轮复用原有 Chromium/CDP 回归方法，详见 progress.md。

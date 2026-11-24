@@ -1,3 +1,5 @@
+import { icon } from './icons.js';
+
 export function h(tag, props = {}, children = []) {
   const element = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -82,6 +84,52 @@ const openMenus = new Set();
 
 export function closeAllMenus() {
   for (const close of [...openMenus]) close();
+}
+
+export function createActionMenu(label, actions) {
+  const trigger = h('button', { type: 'button', class: 'icon-button', 'aria-label': label, 'aria-haspopup': 'menu', 'aria-expanded': 'false' }, [icon('more')]);
+  const menu = h('div', { class: 'action-menu', role: 'menu', 'aria-label': label, hidden: true });
+  const wrapper = h('div', { class: 'actions-menu' }, [trigger, menu]);
+  function close(restoreFocus = false) {
+    menu.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', outside);
+    openMenus.delete(close);
+    if (restoreFocus && trigger.isConnected) trigger.focus();
+  }
+  function outside(event) {
+    if (!wrapper.contains(event.target)) close();
+  }
+  function open() {
+    closeAllMenus();
+    menu.hidden = false;
+    wrapper.classList.remove('opens-up');
+    const bottom = [...document.querySelectorAll('.nav, .wardrobe-mobile-actions, .studio__submit-card')]
+      .filter((node) => getComputedStyle(node).position === 'fixed' && node.getBoundingClientRect().height > 0)
+      .reduce((edge, node) => Math.min(edge, node.getBoundingClientRect().top - 8), innerHeight - 12);
+    wrapper.classList.toggle('opens-up', menu.getBoundingClientRect().bottom > bottom);
+    trigger.setAttribute('aria-expanded', 'true');
+    openMenus.add(close);
+    document.addEventListener('pointerdown', outside);
+    menu.querySelector('button')?.focus();
+  }
+  for (const action of actions) {
+    menu.append(h('button', { type: 'button', role: 'menuitem', class: action.danger ? 'is-danger' : '', onclick: () => { close(true); action.run(); } }, [icon(action.icon), h('span', { text: action.label })]));
+  }
+  trigger.addEventListener('click', () => menu.hidden ? open() : close(true));
+  wrapper.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); close(true); }
+    else if (event.key === 'Tab') close();
+    else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      if (menu.hidden) { open(); return; }
+      const buttons = [...menu.querySelectorAll('button')];
+      const current = buttons.indexOf(document.activeElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    }
+  });
+  return wrapper;
 }
 
 export function createCapsuleSelect({ options = [], value = '', placeholder = '请选择', ariaLabel = '', onChange } = {}) {

@@ -8,9 +8,10 @@
 | 图片服务 | OpenAI 兼容 HTTP：`POST /v1/images/generations`、`POST /v1/images/edits`、`GET /v1/models` | 地址 `IMAGE_API_BASE_URL`（默认 `http://127.0.0.1:3425/v1`），密钥 `IMAGE_API_KEY` 走 `Authorization: Bearer` |
 | 生成 | JSON（无参考图）或 multipart（有参考图） | 有参考图时字段 `model/prompt/n/response_format/size/quality` + `image[]`；回包取 `data[0].b64_json` 与 `mime_type` |
 | 模型目录 | `GET /v1/models` 里 `modalities.output` 含 `image` 的条目，再补上 `IMAGE_MODEL` | `IMAGE_MODELS` 显式给出时不再请求目录 |
-| 测试 | node --test | 注入 fetchImpl，不依赖真实上游 |
+| 测试 | node --test | API/领域测试 + `test/frontend.test.mjs`；真实临时后端/JSON 状态，模拟外部上游 |
 | 存储 | 仓库内 `data/*.json` 原子写入 | 商品目录、会话余额、订单；不存人像照片 |
-| 页面驱动 | OpenCLI 2.0.3（`--window foreground`） | 真实页面交互与响应式核验；**不静默回退 Playwright** |
+| 页面驱动 | OpenCLI 2.0.3（首选实时驱动） | 当前容器桥接未连接，单独列明，不假称 OpenCLI 验收通过 |
+| 既有浏览器回归方法 | 已安装 Chromium 133.0.6943.141 + Node 内建 WebSocket/CDP | `test/helpers/browser.mjs` 复用本项目既有 CDP 方法，原生键盘/鼠标；无新增依赖、无 Playwright；未找到已装浏览器则显式 skip，可设 TRYON_TEST_CHROME |
 | 商品取图 | 四家全部服务端直连：淘宝 = 登录 cookie + mtop；抖音 = 分享链接数据 + ttwid；京东 = 手机版详情页 `window._itemOnly`（免登录）；拼多多 = `goods1.html` 的 `window.rawData`（需 pdd cookie）。OpenCLI 仅在直连失败时兜底 | 不开浏览器、不依赖本机 OpenCLI；兜底才用 `execFile` 调 `node <opencli>/dist/src/main.js` |
 | 扫码登录 | 受控 Chrome（独立 `--user-data-dir`）+ CDP | `Target.createTarget` → `attachToTarget(flatten)` → `Network.getAllCookies`，能拿 HttpOnly；OpenCLI 的 `browser eval` 拿不到、`chrome call` 明确拒绝该方法 |
 | 视觉 / 对话 | OpenAI 兼容 `POST /v1/chat/completions` | 默认复用图片服务的地址与密钥，可用 `CHAT_API_BASE_URL` / `CHAT_API_KEY` 单独指向；衣橱描述 `CAPTION_MODEL`、今日选搭 `STYLIST_MODEL`，默认 `codex/gpt-6.1-sol`；失败降级不阻断主流程 |
@@ -38,6 +39,12 @@
 - 本机开发态只监听 127.0.0.1 并校验 Host/Origin；对外部署形态（云主机 + HTTPS + 反代）在 BACKEND_STRUCTURE.md 记录为**待实现的部署模式**，本轮不部署。
 - 图片服务持有提供方凭据；应用只从环境变量读密钥，不读写、不回传密钥。
 - 日志不打印 base64、凭据与完整上游错误体。
+
+## 前端交付与缓存
+
+正式页面采用已批准 B 衣橱 + A 工作台，只有一套 CSS 令牌；系统字体、自有 SVG、原生 dialog，无外链字体或 CDN。
+HTML、JS、CSS 每次重新验证（`Cache-Control: no-cache`），防止无构建 ESM 导入链混合新旧版本；图片保留短缓存。
+本项目无构建产物，运行实例直接读取 public 源码；发布验证需对照实际 HTTP 文件内容与本地源码摘要。
 
 ## 复用决策
 复用 Node 内建网络、JSON、字节校验、超时取消与现有 node --test 断言；薄适配一个 OpenAI 兼容的图片服务，不自建模型协议、不引入 SDK、不引入 OpenAI 官方包（`fetch` + `FormData` + `Blob` 都是 Node 24 内建）。

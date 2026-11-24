@@ -343,6 +343,14 @@ test('静态页面可访问且不暴露目录穿越', async () => {
     const page = await call('/');
     assert.equal(page.status, 200);
     assert.match(page.payload, /穿搭试穿间|搭配试穿间/);
+    assert.equal(page.headers.get('cache-control'), 'no-cache');
+    for (const path of ['/app.js', '/views/wardrobe.js', '/style.css']) {
+      const asset = await call(path);
+      assert.equal(asset.status, 200);
+      assert.equal(asset.headers.get('cache-control'), 'no-cache', `${path} must revalidate to avoid mixing frontend versions`);
+    }
+    const image = await call('/catalog/blouse-linen.jpg');
+    assert.equal(image.headers.get('cache-control'), 'public, max-age=300');
     const traversal = await call('/../package.json');
     assert.notEqual(traversal.status, 200);
   });

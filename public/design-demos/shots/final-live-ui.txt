@@ -1,0 +1,109 @@
+selection {"pressed":2,"count":"已选 2 / 5 件","goDisabled":false,"items":["奶油色针织衫","黑色直筒牛仔裤"]}
+edit-dialog {"labels":["编辑单品","删除单品"],"expanded":"false","dialog":true,"title":"编辑单品","focused":"INPUT."}
+delete-dialog {"open":true,"title":"删除这件单品？","buttons":["保留单品","删除单品"],"focused":"保留单品"}
+import-dialog {"open":true,"label":"从商品链接添加","size":[580,407],"scrollable":false}
+handoff {"hash":"#/studio","pieces":2,"submitDisabled":false,"title":"试穿工作台"}
+mobile-bar {"visible":true,"aboveNav":10,"count":"当前搭配 2 / 5 件","disabled":false}
+menu-390 {"open":true,"right":191,"width":172}
+mobile-handoff {"hash":"#/studio","pieces":2,"person":true,"submit":false,"fixedBar":[12,768]}
+{
+  "report": [
+    {
+      "name": "wardrobe-1440",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "broken": 0,
+      "h1": "我的衣橱",
+      "dialogs": 0
+    },
+    {
+      "name": "studio-1440",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "broken": 0,
+      "h1": "试穿工作台",
+      "dialogs": 0
+    },
+    {
+      "name": "studio-390",
+      "width": 390,
+      "scrollWidth": 390,
+      "broken": 0,
+      "h1": "试穿工作台",
+      "dialogs": 0
+    },
+    {
+      "name": "wardrobe-390",
+      "width": 390,
+      "scrollWidth": 390,
+      "broken": 0,
+      "h1": "我的衣橱",
+      "dialogs": 0
+    },
+    {
+      "name": "settings-1440",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "broken": 0,
+      "h1": "设置",
+      "dialogs": 0
+    },
+    {
+      "name": "me-1440",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "broken": 0,
+      "h1": "试穿记录",
+      "dialogs": 0
+    },
+    {
+      "name": "shop-1440",
+      "width": 1440,
+      "scrollWidth": 1440,
+      "broken": 0,
+      "h1": "橱窗",
+      "dialogs": 0
+    },
+    {
+      "name": "settings-390",
+      "width": 390,
+      "scrollWidth": 390,
+      "broken": 0,
+      "h1": "设置",
+      "dialogs": 0
+    },
+    {
+      "name": "me-390",
+      "width": 390,
+      "scrollWidth": 390,
+      "broken": 0,
+      "h1": "试穿记录",
+      "dialogs": 0
+    },
+    {
+      "name": "studio-768",
+      "width": 768,
+      "scrollWidth": 768,
+      "broken": 0,
+      "h1": "试穿工作台",
+      "dialogs": 0
+    },
+    {
+      "name": "wardrobe-768",
+      "width": 768,
+      "scrollWidth": 768,
+      "broken": 0,
+      "h1": "我的衣橱",
+      "dialogs": 0
+    },
+    {
+      "name": "settings-768",
+      "width": 768,
+      "scrollWidth": 768,
+      "broken": 0,
+      "h1": "设置",
+      "dialogs": 0
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,9 @@
+✔ 索引被改成目录穿越的 imageFile 时不会读到目录外的文件 (3.194374ms)
+ℹ tests 149
+ℹ suites 0
+ℹ pass 149
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16496.760536

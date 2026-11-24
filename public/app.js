@@ -1,5 +1,7 @@
 import { api, deviceId, getSessionId, setSessionId } from './lib/api.js';
+import { closeAllDialogs } from './lib/dialog.js';
 import { clear, closeAllMenus, h, money, toast } from './lib/dom.js';
+import { icon } from './lib/icons.js';
 import { renderMe } from './views/me.js';
 import { renderShop } from './views/shop.js';
 import { renderSettings } from './views/settings.js';
@@ -18,7 +20,8 @@ const ctx = {
   products: [],
   demoMode: false,
   model: null,
-  pendingPiece: null,
+  pendingPieces: null,
+  pendingPerson: null,
   balanceCents: 0,
   applyDemoMode,
   onNavigate,
@@ -70,18 +73,21 @@ function setActiveNav(route) {
 function render() {
   const { route, id } = currentRoute();
   setActiveNav(route);
-  // 先收掉展开中的下拉：它的 document 监听器挂在被清掉的节点上，不摘就会一直留着。
   closeAllMenus();
+  closeAllDialogs();
   clear(root);
-  if (route === 'tryon') renderTryon(root, ctx, id);
+  root.dataset.view = route;
+  const view = h('div', { class: 'view-content' });
+  root.append(view);
+  if (route === 'tryon') renderTryon(view, ctx, id);
   else if (route === 'studio') {
-    const preset = ctx.pendingPiece;
-    ctx.pendingPiece = null;
-    renderStudio(root, ctx, preset);
-  } else if (route === 'wardrobe') renderWardrobe(root, ctx);
-  else if (route === 'settings') renderSettings(root, ctx);
-  else if (route === 'me') renderMe(root, ctx);
-  else renderShop(root, ctx);
+    const preset = ctx.pendingPieces;
+    ctx.pendingPieces = null;
+    renderStudio(view, ctx, preset);
+  } else if (route === 'wardrobe') renderWardrobe(view, ctx);
+  else if (route === 'settings') renderSettings(view, ctx);
+  else if (route === 'me') renderMe(view, ctx);
+  else renderShop(view, ctx);
   // 换页必须回到顶部：否则从长页面（如工作台）跳到短页面时，
   // 浏览器会把 scrollY 钳到新页面高度，标题被顶栏压住。
   window.scrollTo(0, 0);
@@ -106,16 +112,10 @@ async function loadSettings() {
 }
 
 function wireNav() {
+  const icons = { studio: 'studio', wardrobe: 'wardrobe', settings: 'settings', me: 'orders' };
   for (const item of document.querySelectorAll('.nav__item')) {
+    item.prepend(icon(icons[item.dataset.route]));
     item.addEventListener('click', () => onNavigate(item.dataset.route));
-  }
-  for (const group of document.querySelectorAll('.nav__group')) {
-    const title = group.querySelector('.nav__group-title');
-    title.addEventListener('click', () => {
-      const next = title.getAttribute('aria-expanded') !== 'true';
-      title.setAttribute('aria-expanded', next ? 'true' : 'false');
-      group.classList.toggle('is-collapsed', !next);
-    });
   }
 }
 
