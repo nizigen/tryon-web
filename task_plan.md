@@ -87,4 +87,4 @@ v5 追加：把本机私有网关（MCP/JSON-RPC 协议）换成通用 OpenAI �
 - [x] 更新 FRONTEND_GUIDELINES / APP_FLOW / IMPLEMENTATION_PLAN，并在现有 API 与原生 ESM 栈上完成正式页面。
 - [x] 原生 Chromium 真实临时后端交互/落盘回归、四档布局、独立代码/安全/视觉评审；最终 `node --test` 149/149 pass。
 - [x] 重启运行实例，18 个实际 HTTP 源文件逐字节匹配；仅清理自有 3 件验收单品，恢复原衣橱；证据随本轮提交。
-- [ ] OpenCLI 专项复跑：扩展桥接仍缺失，未安装或假称通过；本轮复用原有 Chromium/CDP 回归方法，详见 progress.md。
+- [x] OpenCLI 专项复跑（2026-11-24）：先 `opencli doctor` 确认扩展已装（OpenCLI v1.0.27）但 Chrome 未启动导致桥接未连；启动 Chrome 后 `extensionConnected:true`，用 `opencli browser --session tryon` 实跑工作台/衣橱/设置/记录四页，1440/768/390 无横向溢出、控制台 0 报错、衣橱 16 张卡与选中/交接链路可用。

@@ -468,4 +468,14 @@ ode --test\ 137/137 通过。
 - 最终运行截图：`public/design-demos/shots/prod-*.png`；12 个运行场景无横向溢出、破图、Runtime 异常，手机操作条与导航间有 10px 空隙，菜单向上展开并完整可达。截图里的三件单品是本次自行创建的 API 验收数据，已仅按自有 ID 回收 3/3，运行衣橱恢复原来的 0 件；清理后空态截图为 `final-wardrobe-1440.png` / `final-wardrobe-390.png`。
 - 对比度数值检查覆盖五个实际视图；非禁用文本无低于阈值项。原本只剩一条单品时禁用的删除 × 对比度 1.91，为非操作性禁用控件，保留豁免记录，未冒充所有文本均 ≥4.5。
 
-**边界**：OpenCLI 扩展桥接仍未连接，OpenCLI 专项实时验收未通过；本轮显式复用既有原生 Chromium 回归方法，未安装工具或回退 Playwright。默认 LSP 的 Biome 等命令不可用，未声称类型/LSP 检查通过；需要该能力时应安装配置对应服务或更新 pi-lsp.json。真实付费图片上游、手机扫码登录、四平台真实解析及物理手机未重跑；不把模拟上游成功冒充这些链路已验证。
+**边界**：默认 LSP 的 Biome 等命令不可用，未声称类型/LSP 检查通过；需要该能力时应安装配置对应服务或更新 pi-lsp.json。真实付费图片上游、手机扫码登录、四平台真实解析及物理手机未重跑；不把模拟上游成功冒充这些链路已验证。
+
+## 2026-11-24 · OpenCLI 专项复跑（补齐上一轮遗留）
+
+上一轮把「OpenCLI 专项实时验收」列为未通过，原因是扩展桥接未连接。本轮查清：扩展本身已装（`C:\Users\l1234\AppData\Local\Google\Chrome\User Data\Default\Extensions\ildkmabpimmkaediidaifkhjpohdnifk`，OpenCLI v1.0.27，等于最新版），**只是 Chrome 没在运行**。启动 Chrome 默认 profile 后 `opencli doctor` 返回 `extensionConnected:true`，无需安装或换驱动。
+
+- 快进远端 `e54b6f1` → `114ceb3`（`4903b99` 设计方向文档 + `114ceb3` 全站前端重构），工作区干净。
+- `node --test`：**140 pass / 1 skip / 0 fail**。skip 是 `test/helpers/browser.mjs` 的 `chromePath` 只探 Linux/macOS 路径；用 `TRYON_TEST_CHROME='C:\Program Files\Google\Chrome\Application\chrome.exe'` 单跑 `test/frontend.test.mjs` **9/9 pass**（真实 Chromium + 真实临时后端），未改测试代码。
+- 演示服务 `DEMO_MODE=1` 起在 43130（后台 job `pwsh-e0c40e5074834071`），`GET /api/config` 200，`demoMode:true reachable:true`。
+- OpenCLI 实跑（`--session tryon`）：工作台、衣橱、设置、记录四页；衣橱 **16 张卡**、点选后出现「已选 1 / 5 件」操作条、点「去试穿这一套」跳到 `#/studio` 且单品带入；1440/768/390 三档 `scrollWidth <= innerWidth` 无横向溢出；`console --level error` **0 条**。截图 `artifacts/shots/live-*.png`（git-ignored）。
+- 未验：真实付费上游生成、扫码登录、四平台解析、物理手机——与上一轮同一批边界，本轮未扩大范围。
