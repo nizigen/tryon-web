@@ -137,3 +137,77 @@ test('layer sorting is stable and prompt reference numbers follow it', () => {
   assert.match(prompt, /reference image 7 .*outside reference image 2, reference image 3, reference image 4, reference image 5, reference image 6/);
   assert.doesNotMatch(prompt, /closest to the skin|keep the inner top visible|hosiery first and then the bottoms/);
 });
+
+test('ordinary outfit prompt still preserves the original pose and background', () => {
+  const prompt = buildOutfitPrompt({
+    pieces: [{ slot: 'top', garmentType: '毛衣' }],
+  });
+  assert.match(prompt, /background, camera angle, lens perspective, framing, colour grading and light direction/);
+  assert.match(prompt, /do not change the background, the pose, the face, the body or the framing/);
+  assert.doesNotMatch(prompt, /PHOTOGRAPHY MODE: STUDIO/);
+});
+
+test('studio outfit prompt rebuilds only pose and photography while preserving identity and every garment', () => {
+  const prompt = buildOutfitPrompt({
+    pieces: [
+      { slot: 'outer', garmentType: '大衣', name: '深棕色长款风衣' },
+      { slot: 'top', garmentType: '针织衫' },
+      { slot: 'bottom', garmentType: '半身裙' },
+    ],
+    photographyMode: 'studio',
+    studioPreset: 'clean-white-seamless',
+    posePreset: 'over-shoulder',
+  });
+  assert.match(prompt, /PHOTOGRAPHY MODE: STUDIO/);
+  assert.match(prompt, /pure-white seamless studio/i);
+  assert.match(prompt, /glance back over one shoulder/i);
+  assert.match(prompt, /may replace the original pose, background, camera position and lighting/i);
+  assert.match(prompt, /face, facial features, skin tone, skin texture, hair style and body proportions/);
+  assert.match(prompt, /combine all the pieces above at the same time on the same person; never drop a selected piece/);
+  assert.match(prompt, /shadowless studio lighting/i);
+  assert.match(prompt, /no visible cast shadow, no broad contact shadow, no ambient-occlusion halo and no dark patch/i);
+  assert.match(prompt, /faintest natural shoe-to-floor contact/i);
+  assert.match(prompt, /locked camera, framing, exposure, white balance and light position/i);
+  assert.match(prompt, /tall 2:3 full-body vertical fashion photograph/i);
+  assert.doesNotMatch(prompt, /9:16/);
+  assert.match(prompt, /Reference image 5 is the PoseWear pose reference and is not clothing/);
+  assert.match(prompt, /ignore the identity, face, hair, makeup, clothing, phone, accessories, background, framing and art style in reference image 5/);
+  assert.match(prompt, /reference image 5 supplies only the body pose/);
+  assert.doesNotMatch(prompt, /do not change the background, the pose, the face, the body or the framing/);
+});
+
+test('studio pose recommendation returns three unique poses and adapts to outerwear', () => {
+  assert.equal(prompts.STUDIO_PRESETS.length >= 1, true);
+  assert.equal(prompts.POSE_PRESETS.length >= 3, true);
+  const outerPoses = prompts.recommendStudioPoses([{ slot: 'outer' }, { slot: 'bottom' }]);
+  assert.deepEqual(outerPoses, ['contrapposto', 'hand-behind-head', 'over-shoulder']);
+  assert.equal(new Set(outerPoses).size, 3);
+  assert.deepEqual(
+    prompts.recommendStudioPoses([{ slot: 'top' }, { slot: 'bottom' }]),
+    ['contrapposto', 'hand-behind-head', 'over-shoulder'],
+  );
+  assert.deepEqual(
+    prompts.recommendStudioPoses([{ slot: 'dress' }]),
+    ['contrapposto', 'duck-sit', 'crouch-chin'],
+  );
+});
+
+test('unknown studio and pose presets are rejected at the domain boundary', () => {
+  assert.throws(
+    () => prompts.normalizeStudioPreset('not-a-studio'),
+    (error) => error.status === 400 && error.field === 'studioPreset',
+  );
+  assert.throws(
+    () => prompts.normalizePosePreset('not-a-pose'),
+    (error) => error.status === 400 && error.field === 'posePreset',
+  );
+  assert.equal(prompts.normalizePosePreset('coat-sway'), 'over-shoulder');
+  assert.equal(prompts.normalizePosePreset('editorial-stand'), 'contrapposto');
+  assert.equal(prompts.DEFAULT_POSE_PRESET, 'contrapposto');
+  for (const invalid of [[], ['editorial-stand'], { toString: null }, 42, null]) {
+    assert.throws(
+      () => prompts.normalizePosePreset(invalid),
+      (error) => error.status === 400 && error.field === 'posePreset',
+    );
+  }
+});

@@ -14,23 +14,57 @@ import { chromePath, openBrowser, waitFor } from './helpers/browser.mjs';
 const MODEL = 'codex/gpt-image-2.5';
 const imageBytes = Buffer.concat([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'), Buffer.alloc(8192)]);
 
-async function createFixture() {
+async function createFixture({ models = [MODEL], env: envOverrides = {} } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'tryon-frontend-'));
   await writeFile(join(dir, 'catalog.json'), JSON.stringify({ products: [] }));
-  const env = { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425/v1', IMAGE_MODEL: MODEL, DEMO_MODE: '1' };
+  const env = { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425/v1', IMAGE_MODEL: MODEL, DEMO_MODE: '1', ...envOverrides };
   const fetchImpl = async (url) => new Response(JSON.stringify(String(url).endsWith('/models')
-    ? { data: [{ id: MODEL, modalities: { output: ['image'] } }] }
+    ? { data: models.map((id) => ({ id, modalities: { output: ['image'] } })) }
     : { data: [{ b64_json: imageBytes.toString('base64'), mime_type: 'image/png' }] }), { headers: { 'content-type': 'application/json' } });
   const store = createStore({ dir, catalogFile: join(dir, 'catalog.json') });
   await store.ready();
   const sources = createSourceService({ runCli: null, fetchImpl, settleMs: 0 });
   const wardrobe = createWardrobe({ dir, env, fetchImpl, sources, captioner: async () => '' });
   const tryon = createTryonService({ store, env, fetchImpl, resultsDir: join(dir, 'results') });
-  const app = createApp({ env, store, sources, wardrobe, tryon, fetchImpl, stylist: { suggest: async () => ({ slots: {}, reason: '', missing: [] }) }, login: {}, resultsDir: join(dir, 'results') });
+  const app = createApp({
+    env,
+    store,
+    sources,
+    wardrobe,
+    tryon,
+    fetchImpl,
+    stylist: {
+      suggestByRule: async () => {
+        const items = (await wardrobe.list()) ?? [];
+        return {
+          slots: {
+            top: items.find((item) => item.category === 'top') ?? null,
+            bottom: items.find((item) => item.category === 'bottom') ?? null,
+          },
+          reason: '按通勤场景选择',
+          missing: [],
+        };
+      },
+      suggest: async () => {
+        const payload = await wardrobe.list();
+        const items = payload ?? [];
+        return {
+          slots: {
+            top: items.find((item) => item.category === 'top') ?? null,
+            bottom: items.find((item) => item.category === 'bottom') ?? null,
+          },
+          reason: '按通勤场景选择',
+          missing: [],
+        };
+      },
+    },
+    login: {},
+    resultsDir: join(dir, 'results'),
+  });
   await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${app.address().port}`;
-  async function call(path, method = 'GET', body) {
-    const response = await fetch(base + path, { method, headers: { origin: base, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  async function call(path, method = 'GET', body, extraHeaders = {}) {
+    const response = await fetch(base + path, { method, headers: { origin: base, 'content-type': 'application/json', ...extraHeaders }, body: body ? JSON.stringify(body) : undefined });
     const text = await response.text();
     return { status: response.status, payload: text ? JSON.parse(text) : null };
   }
@@ -40,6 +74,7 @@ async function createFixture() {
     assert.equal(response.status, 201);
     items.push(response.payload.item);
   }
+  await call('/api/outfit/suggest', 'POST', { request: '测试' });
   return { dir, app, base, call, items, async close() { await new Promise((resolve) => app.close(resolve)); await rm(dir, { recursive: true, force: true }); } };
 }
 
@@ -175,6 +210,67 @@ test('正式前端：原生 Chromium 真实 API 与交互回归', { skip: !chrom
       assert.equal((await call('/api/wardrobe')).payload.items.find(item => item.id === items[1].id).layer, 'inner');
     });
 
+    await t.test('工作台切换到无影棚，一键依次生成三个姿势并保留真实订单字段', async () => {
+      await wardrobe(390);
+      for (const item of items.slice(1, 3)) await click(`${card(item)} .wardrobe-card__thumb`);
+      await click('.wardrobe-mobile-actions .btn--primary');
+      await waitFor(() => ev('document.querySelectorAll(".slot").length === 2 && document.querySelector(".dropzone__preview")?.naturalWidth > 0'), 'studio inputs');
+      await click('[data-photography-mode="studio"]');
+      await waitFor(() => ev('Boolean(document.querySelector(".studio-photo__presets"))'), 'studio controls');
+      assert.equal(await ev('document.querySelector("[data-photography-mode=studio]").getAttribute("aria-pressed")'), 'true');
+      assert.equal(await ev('document.querySelectorAll(".studio-photo__pose").length'), 3);
+      assert.equal(await ev('document.querySelectorAll(".studio-photo__pose").length === 3 && [...document.querySelectorAll(".studio-photo__pose img")].every(node => node.getAttribute("src").startsWith("/posewear/"))'), true);
+      assert.equal(await ev('document.querySelectorAll(".studio-photo__pose select").length'), 3);
+      const selectedPoses = await ev('[...document.querySelectorAll(".studio-photo__pose select")].map((node) => node.value)');
+      assert.equal(new Set(selectedPoses).size, 3);
+      await ev('const select = document.querySelectorAll(".studio-photo__pose select")[0]; select.value = "duck-sit"; select.dispatchEvent(new Event("change", {bubbles:true}))');
+      assert.equal(await ev('document.querySelectorAll(".studio-photo__pose select")[0].value'), 'duck-sit');
+      assert.equal(await ev('document.activeElement === document.querySelectorAll(".studio-photo__pose select")[0]'), true);
+      const changedPoses = await ev('[...document.querySelectorAll(".studio-photo__pose select")].map((node) => node.value)');
+      assert.equal(new Set(changedPoses).size, 3);
+      await click('.studio-photo__pose-tools .btn');
+      const restoredPoses = await ev('[...document.querySelectorAll(".studio-photo__pose select")].map((node) => node.value)');
+      assert.deepEqual(restoredPoses, ['contrapposto', 'hand-behind-head', 'over-shoulder']);
+      assert.equal(await ev('document.querySelector("[data-photography-mode=studio]").disabled'), false);
+      assert.equal(await ev('document.querySelector(".studio__submit .btn").textContent.includes("3 个姿势")'), true);
+      await click('.studio__submit .btn');
+      assert.equal(await ev('document.querySelector("[data-photography-mode=preserve]").disabled'), true);
+      assert.equal(await ev('document.querySelector("#studio-preset").disabled'), true);
+      await waitFor(() => ev('document.querySelectorAll(".studio-batch .canvas img").length === 3'), 'three studio results', 15000);
+      assert.equal(await ev('document.querySelectorAll(".studio-batch .canvas img").length'), 3);
+      await waitFor(() => ev('document.querySelector(".studio__submit .btn").disabled === false'), 'studio submit re-enabled');
+      assert.equal(await ev('document.querySelector(".studio__submit .btn").textContent'), '生成 3 个姿势');
+      assert.equal(await ev('document.querySelector(".result").textContent.includes("null")'), false);
+      assert.equal(await ev('document.querySelector(".studio__preview [role=status]").textContent.includes("已完成")'), true);
+      assert.equal(await ev('(() => { const result = document.querySelector(".result"); const rect = result.getBoundingClientRect(); return rect.top < innerHeight && rect.bottom > 0; })()'), true);
+      const sessionId = await ev('localStorage.getItem("tryon.sessionId")');
+      const orders = (await call('/api/orders', 'GET', undefined, { 'x-session-id': sessionId })).payload.orders;
+      assert.equal(orders.length >= 3, true);
+      const studioOrders = orders.filter((order) => order.photographyMode === 'studio');
+      assert.equal(studioOrders.length, 3);
+      assert.equal(new Set(studioOrders.map((order) => order.posePreset)).size, 3);
+      assert.equal(studioOrders.every((order) => order.studioPreset === 'clean-white-seamless'), true);
+      const persisted = JSON.parse(await readFile(join(fixture.dir, 'state.json'), 'utf8'));
+      assert.equal(persisted.orders.filter((order) => order.photographyMode === 'studio').length, 3);
+      const state = JSON.parse(await readFile(join(fixture.dir, 'state.json'), 'utf8'));
+      assert.equal(Object.values(state.orders).filter((order) => order.photographyMode === 'studio').every((order) => ['contrapposto', 'hand-behind-head', 'over-shoulder'].includes(order.posePreset)), true);
+    });
+
+    await t.test('普通试穿结果标签页保持焦点并支持方向键切换', async () => {
+      await wardrobe(1440);
+      for (const item of items.slice(1, 3)) await click(`${card(item)} .wardrobe-card__thumb`);
+      await click('.wardrobe-aside .btn--primary');
+      await waitFor(() => ev('document.querySelectorAll(".slot").length === 2 && document.querySelector(".dropzone__preview")?.naturalWidth > 0'), 'tab inputs');
+      await click('.studio__submit .btn');
+      await waitFor(() => ev('Boolean(document.querySelector("[role=tab]"))'), 'result tabs');
+      await click('#result-tab-original');
+      assert.equal(await ev('document.activeElement.id'), 'result-tab-original');
+      await key('ArrowRight', 'ArrowRight');
+      assert.equal(await ev('document.activeElement.id'), 'result-tab-compare');
+      assert.equal(await ev('document.querySelector("#result-tab-compare").getAttribute("aria-selected")'), 'true');
+      assert.equal(await ev('document.querySelector("#result-tabpanel").getAttribute("aria-labelledby")'), 'result-tab-compare');
+    });
+
     await t.test('工作台从衣橱选择使用原生弹窗，选中后返回对应条目', async () => {
       await goto(url('studio'), 390);
       await waitFor(() => ev('Boolean(document.querySelector(".slot .inline-field"))'), 'piece controls');
@@ -211,6 +307,45 @@ test('正式前端：原生 Chromium 真实 API 与交互回归', { skip: !chrom
       }
       assert.deepEqual(browser.errors, []);
     });
+  } finally {
+    await browser.close();
+    await fixture.close();
+  }
+});
+
+test('衣橱 AI 选搭可直接交接无影棚模式', { skip: !chromePath && '未找到已安装 Chromium；可用 TRYON_TEST_CHROME 指向已有浏览器', timeout: 30000 }, async () => {
+  const fixture = await createFixture();
+  const browser = await openBrowser();
+  try {
+    await browser.goto(`${fixture.base}/#/wardrobe`, 390);
+    await waitFor(() => browser.evaluate('document.querySelectorAll(".wardrobe-card").length > 0'), 'wardrobe');
+    await browser.fill('.stylist .inline-field input', '明天通勤');
+    await browser.click('.stylist .inline-field .btn');
+    await waitFor(() => browser.evaluate('[...document.querySelectorAll(".stylist__order button")].find((button) => button.textContent === "去无影棚拍 3 张")?.disabled === false'), 'studio handoff');
+    await browser.evaluate('[...document.querySelectorAll(".stylist__order button")].find((button) => button.textContent === "去无影棚拍 3 张").click()');
+    await waitFor(() => browser.evaluate('location.hash === "#/studio" && Boolean(document.querySelector(".studio"))'), 'studio route');
+    await waitFor(() => browser.evaluate('location.hash === "#/studio" && document.querySelector("[data-photography-mode=studio]")?.getAttribute("aria-pressed") === "true"'), 'studio preset');
+    assert.equal(await browser.evaluate('document.querySelector(".studio__submit .btn").textContent.includes("3 个姿势")'), true);
+  } finally {
+    await browser.close();
+    await fixture.close();
+  }
+});
+
+test('IDM 或拼图工作流从衣橱交接时不会伪装进入无影棚模式', { skip: !chromePath && '未找到已安装 Chromium；可用 TRYON_TEST_CHROME 指向已有浏览器', timeout: 30000 }, async () => {
+  const fixture = await createFixture({ models: [MODEL, 'idm/idm-vton'] });
+  const browser = await openBrowser();
+  try {
+    const settings = await fixture.call('/api/settings', 'PATCH', { model: 'idm/idm-vton' });
+    assert.equal(settings.status, 200);
+    await browser.goto(`${fixture.base}/#/wardrobe`, 390);
+    await waitFor(() => browser.evaluate('document.querySelectorAll(".wardrobe-card").length > 0'), 'wardrobe');
+    await browser.fill('.stylist .inline-field input', '明天通勤');
+    await browser.click('.stylist .inline-field .btn');
+    await waitFor(() => browser.evaluate('[...document.querySelectorAll(".stylist__order button")].find((button) => button.textContent === "去无影棚拍 3 张")?.disabled === false'), 'studio handoff');
+    await browser.evaluate('[...document.querySelectorAll(".stylist__order button")].find((button) => button.textContent === "去无影棚拍 3 张").click()');
+    assert.equal(await browser.evaluate('location.hash'), '#/wardrobe');
+    assert.match(await browser.evaluate('document.querySelector(".toast")?.textContent ?? ""'), /不支持无影棚/);
   } finally {
     await browser.close();
     await fixture.close();

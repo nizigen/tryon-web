@@ -211,17 +211,24 @@ test('正 prompt 保留作者对齐句，并把 reference image N 映射到人�
   });
   const prompt = nodeOf(graph, 'positive').inputs.prompt;
 
-  assert.match(prompt, /every article of clothing in the bottom row/i);
+  assert.match(prompt, /every article of clothing on the bottom/i);
   assert.match(prompt, /the top person reference/i);
   assert.match(prompt, /garment 1 in the bottom row/i);
   assert.match(prompt, /garment 2 in the bottom row/i);
   assert.doesNotMatch(prompt, /reference image \d/i);
 });
 
+test('对齐句与作者原句逐字一致，不用会让模型输出双栏对比图的 bottom row 措辞', () => {
+  // 2026-11-24 真实出图对照：把对齐句改成 "in the bottom row" 时模型只复刻拼图、不换衣。
+  const prompt = nodeOf(workflowGraph({ images: IMAGES, seed: 1 }), 'positive').inputs.prompt;
+  assert.equal(prompt, 'Style the person in the top of the image, with every article of clothing on the bottom');
+  assert.doesNotMatch(prompt, /bottom row/i);
+});
+
 test('没有附加 prompt 时正 prompt 只保留作者对齐句', () => {
   const graph = workflowGraph({ images: IMAGES, seed: 1 });
   const prompt = nodeOf(graph, 'positive').inputs.prompt;
-  assert.match(prompt, /every article of clothing in the bottom row/i);
+  assert.match(prompt, /every article of clothing on the bottom/i);
   assert.doesNotMatch(prompt, /reference image \d/i);
 });
 

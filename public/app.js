@@ -22,6 +22,7 @@ const ctx = {
   model: null,
   pendingPieces: null,
   pendingPerson: null,
+  pendingPhotographyMode: null,
   balanceCents: 0,
   applyDemoMode,
   onNavigate,

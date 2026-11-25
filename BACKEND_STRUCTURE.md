@@ -1,5 +1,13 @@
 # BACKEND_STRUCTURE — 数据模型、API 契约、计费与安全
 
+## W5：IDM HTTP 边界与订单接线
+
+新增 `src/idm.mjs` 薄适配，复用 `decodeImage/decodeBase64/sniff` 与 `deadline/readUpstream`。模型 ID `idm/idm-vton`；只读 `GET /api/workflows/idm/status` 回 `{configured,ready,message}`。生成只走现有 `/api/orders`：preflight 先校验全部 pieces 的分类/件数和健康，再占位建单。任务内新增无图片的 `{slot,layer,garmentType,name}` 元数据，与现有有序 referenceImages 一一对应；不增加另一套订单/状态模型。
+
+远端 `POST /tryon` 仅收 `{person,garment,category,description,seed}`，图片为纯 base64；分类 upper_body/lower_body/dresses，一次一件。服务启动前按 manifest/receipt 逐件 SHA 校验、缓存 Parsing/OpenPose/DensePose 预测器与 SDXL pipeline；忙时在读请求/解码前拒入。内部补白不拉伸，结果裁回原人物画框。Node 适配先验证全部引用与单品，再逐件调用，前段内联结果成为后段人物，不跟随重定向、不代取第三方 URL。响应体 ≤24MiB、图 ≤16MiB、下一段输入 ≤8MiB、严格 base64/图头；错误不转发远端路径/凭据。任一阶段失败沿用整单失败/全额退款；远端超时后或仍运行，不做自动重发。
+
+应用人像/中间图只在任务内存流转；验证脚本的参考图/样本另存为显式实验产物，不代表服务会留存所有用户图。鞋袜/配饰无 IDM 分类；同部位串联不保证露出领口或内层，页面与文档据实表达。
+
 ## 模块划分
 
 ```
@@ -46,10 +54,11 @@ src/errors.mjs        统一错误类型
 
 **会话 sessions[]**（`data/state.json`）：`id`、`deviceId`、`balanceCents`（余额，单位分）、`createdAt`、`lastSeenAt`。
 
-**订单 orders[]**：`id`、`sessionId`、`productId`、`productName`、`model`、`tier`、`quality`、`size`、`category`、`garmentType`、`slots`、`pieces`、`prompt`、`priceCents`、`costCents`、`status`、`jobId`、`resultFile`、`createdAt`、`finishedAt`、`errorCode`、`errorMessage`。
+**订单 orders[]**：`id`、`sessionId`、`productId`、`productName`、`model`、`tier`、`quality`、`size`、`category`、`garmentType`、`slots`、`pieces`、`photographyMode`、`studioPreset`、`posePreset`、`prompt`、`priceCents`、`costCents`、`status`、`jobId`、`resultFile`、`createdAt`、`finishedAt`、`errorCode`、`errorMessage`。
 
 - `status`：`pending`（排队/生成中）· `success` · `failed` · `expired`（结果已过期清理）。
 - `slots` 是这次搭配用到的格子（`top/outer/bottom/dress/hosiery/shoes/accessory`，accessory 可出现两次）；`pieces` 记录每格的服装子类与名称，不含图片。
+- `photographyMode` 为 `preserve` 或 `studio`；普通试穿保存为 `preserve` 且棚拍字段为 null。无影棚保存固定 `studioPreset` 与 `posePreset`，旧订单读取时默认 `preserve`。
 - **订单记录不保存人物图与服装图**，只保存提示词与元数据；人像与服装图只在任务内存中流转。
 
 **设置 settings**（`data/state.json` 的 `settings`）：`model`——设置页选定的图片模型，`null` 表示跟随目录默认值。只在设置页写，下单时不再让用户选模型。
@@ -110,14 +119,14 @@ src/errors.mjs        统一错误类型
 
 | 方法 | 路径 | 入参 | 出参 |
 | --- | --- | --- | --- |
-| GET | /api/config | — | `{ models:[{id,label,tiers:[{id,label,quality,size,priceCents,costCents}]}], defaultModel, defaultTier, tryOnFromCents, packs, categories, slots, garmentTypes, fits, demoMode, gateway:{reachable}, limits }` |
+| GET | /api/config | — | `{ models:[{id,label,tiers:[{id,label,quality,size,priceCents,costCents}]}], defaultModel, defaultTier, tryOnFromCents, packs, categories, slots, garmentTypes, fits, studioPresets:[{id,label,hint}], posePresets:[{id,label,hint,posewearId,referenceUrl}], defaultStudioPreset, defaultPosePreset, demoMode, gateway:{reachable}, limits }` |
 | GET | /api/products | `?category=&q=&limit=` | `{ products:[Product] }` |
 | GET | /api/products/:id | — | `{ product: Product }` |
 | POST | /api/session | `{ deviceId }` | `{ sessionId, balanceCents, packs }` |
 | GET | /api/session/:id | — | `{ sessionId, balanceCents, packs }` |
 | GET | /api/settings | — | `{ model, models, demoMode, sources:{taobao,jd,pdd,douyin}, gateway:{reachable} }`（`sources` 只回布尔，不回 cookie） |
 | PATCH | /api/settings | `{ model }` | `{ model }` |
-| POST | /api/orders | `{ sessionId, pieces:[{slot, garmentType?, source}], model, tier, fit?, prompt?, person }`；`pieces[].source` 为 `{kind:'product', productId}` / `{kind:'import', sourceId, sourceIndex, name}` / `{kind:'upload', garment}` / `{kind:'wardrobe', wardrobeId}`；兼容旧的单件入参 `{productId?/category?/garmentType?/sourceId?/sourceIndex?/sourceName?, garment?}` | `{ order:{id,status,slots,priceCents}, orderId, jobId, priceCents, balanceCents }` |
+| POST | /api/orders | `{ sessionId, pieces:[{slot, garmentType?, source}], model, tier, fit?, prompt?, person, photographyMode?, studioPreset?, posePreset? }`；`pieces[].source` 为 `{kind:'product', productId}` / `{kind:'import', sourceId, sourceIndex, name}` / `{kind:'upload', garment}` / `{kind:'wardrobe', wardrobeId}`；兼容旧的单件入参 `{productId?/category?/garmentType?/sourceId?/sourceIndex?/sourceName?, garment?}` | `{ order:{id,status,slots,priceCents}, orderId, jobId, priceCents, balanceCents }` |
 | GET | /api/orders | `x-session-id` | `{ orders:[Order] }`（含 jobId、slots，不含 costCents） |
 | GET | /api/orders/:id | `x-session-id` | `{ order:Order, resultToken }` |
 | GET | /api/jobs/:id | — | `{ jobId, orderId, status, stage, error?, updatedAt }` |
@@ -194,6 +203,9 @@ src/errors.mjs        统一错误类型
 - 请求体 ≤24MiB；输出图 ≤16MiB。
 - `prompt` ≤500 码点，只能细化面料/版型/场景；拼接时置于受控段并做单行化与限长。
 - `pieces`：`slot` 必须属于七格白名单；`garmentType` 必须属于该格的服装子类；每格至多一件（`accessory` 至多两件）；总数 ≤5；`dress` 与 `top`/`bottom` 互斥。
+- `photographyMode` 缺省为 `preserve`，保持旧请求行为；`studio` 必须在取图、扣费、建单前验证 `studioPreset` 与 `posePreset` 属于服务端固定目录，非字符串姿势 ID 一律 400。无影棚三姿势由前端顺序创建三笔独立订单，服务端不新增批量订单状态机。
+- 无影棚生成按 `[人物, ...有序服装, 本地 PoseWear 参考图]` 组装，姿势图固定为最后一张且只提供骨骼与身体力学；订单只持久化姿势 ID，不持久化姿势图或人像。输出尺寸固定为 `1024x1536`（2:3），提示词不得声明另一画幅。
+- 仅支持多参考图编辑的图片模型接受 `studio`；IDM-VTON 与 ComfyUI 拼图工作流在取图、扣费前返回 400 `MODEL_MODE_UNSUPPORTED`，客户端应保持普通试穿并禁用无影棚入口。
 - 模型必须出现在当前 `GET /v1/models` 目录中（或由 `IMAGE_MODELS` 显式指定）；档位必须属于该模型，否则 400。
 - 并发：同一会话同时只允许一个进行中任务（409）。
 - 商品链接：只接受 http/https，主机必须在平台白名单内；最多 40 张图；外部商品标题按不可信文本截断到 80 码点后才进提示词。

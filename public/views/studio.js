@@ -39,12 +39,22 @@ const GROUPS = SLOTS.map((def) => ({
 export function renderStudio(root, ctx, preset) {
   const preparedPerson = ctx.pendingPerson;
   ctx.pendingPerson = null;
+  const studioUnsupported = ['idm/idm-vton', 'comfyui/foxbaze-tryon'].includes(ctx.model);
   const state = {
     person: preparedPerson?.image ?? null,
     /** true 表示人物照是内置模特（还没换成自己的），仅用于提示文案。 */
     personIsDefault: Boolean(preparedPerson?.isDefault),
     prompt: '',
     fit: 'regular',
+    photographyMode: ctx.pendingPhotographyMode === 'studio' && !studioUnsupported ? 'studio' : 'preserve',
+    studioPreset: ctx.config.defaultStudioPreset ?? 'clean-white-seamless',
+    posePresets: [],
+    poseSelectionTouched: false,
+    results: [],
+    batchIndex: 0,
+    batchTotal: 0,
+    batchMode: null,
+    batchStudioPreset: null,
     tab: 'result',
     order: null,
     job: null,
@@ -55,6 +65,7 @@ export function renderStudio(root, ctx, preset) {
     // 商品链接面板的临时状态，index 指向正在填写的条目。
     link: { index: -1, url: '', loading: false, source: null, error: '' },
   };
+  ctx.pendingPhotographyMode = null;
 
   const entriesEl = h('div', { class: 'slots' });
   const hintEl = h('p', { class: 'studio__hint', hidden: true });
@@ -66,6 +77,12 @@ export function renderStudio(root, ctx, preset) {
   const submitStatus = h('span', { class: 'studio__busy', hidden: true }, [submitSpinner, submitStatusText]);
   const demoNote = h('span', { class: 'field__hint', text: '演示模式 · 本次试穿不扣费' });
   const resultBody = h('div', { class: 'result' });
+  const liveStatus = h('p', {
+    class: 'visually-hidden',
+    role: 'status',
+    'aria-live': 'polite',
+    'aria-atomic': 'true',
+  });
 
   const uploadPreview = h('img', { class: 'dropzone__preview', alt: '人物照片预览', hidden: true });
   const uploadError = h('p', { class: 'error-text', hidden: true });
@@ -102,6 +119,17 @@ export function renderStudio(root, ctx, preset) {
         layer: piece.layer ?? 'auto',
         source: piece.source,
       }));
+  }
+
+  function recommendedPoses(pieces = piecesFromState()) {
+    const slots = new Set(pieces.map((piece) => piece.slot));
+    if (slots.has('outer')) return ['contrapposto', 'hand-behind-head', 'over-shoulder'];
+    if (slots.has('dress')) return ['contrapposto', 'duck-sit', 'crouch-chin'];
+    return ['contrapposto', 'hand-behind-head', 'over-shoulder'];
+  }
+
+  function poseById(id) {
+    return (ctx.config.posePresets ?? []).find((pose) => pose.id === id) ?? null;
   }
 
   function readImage(file, onOk) {
@@ -482,7 +510,8 @@ export function renderStudio(root, ctx, preset) {
   function updateSubmit() {
     const pieces = piecesFromState();
     pieceCountTag.textContent = `${pieces.length} 件单品`;
-    const busy = Boolean(state.order && state.order.status === 'pending');
+    const batchRunning = state.batchTotal > 0 && state.batchIndex < state.batchTotal;
+    const busy = Boolean(state.order && state.order.status === 'pending') || batchRunning;
     if (pieces.length > MAX_PIECES) {
       countEl.textContent = `已选 ${pieces.length} 件，超过上限 ${MAX_PIECES} 件`;
       countEl.classList.add('is-over');
@@ -498,11 +527,17 @@ export function renderStudio(root, ctx, preset) {
       countEl.classList.add('is-over');
     }
     submitBtn.disabled = busy || !state.person || pieces.length === 0 || pieces.length > MAX_PIECES || tooHeavy;
-    submitBtn.textContent = busy ? '生成中…' : '生成试穿图';
+    submitBtn.textContent = busy
+      ? (state.batchTotal > 1 ? `正在生成 ${state.batchIndex + 1}/${state.batchTotal}` : '生成中…')
+      : state.photographyMode === 'studio' ? '生成 3 个姿势' : '生成试穿图';
     // 按钮旁同步显示转圈与阶段：只在结果区转圈时，首屏看着像「完全不转」。
     submitStatus.hidden = !busy;
     submitSpinner.hidden = !busy;
     submitStatusText.textContent = busy ? (STAGE_TEXT[state.job?.stage] ?? STAGE_TEXT.generating) : '';
+    for (const button of photographyButtons.children) {
+      button.disabled = busy || (studioUnsupported && button.dataset.photographyMode === 'studio');
+    }
+    studioPresetSelect.disabled = busy;
     demoNote.hidden = !ctx.demoMode;
   }
 
@@ -533,9 +568,58 @@ export function renderStudio(root, ctx, preset) {
     state.poll = null;
   }
 
-  function paintResult() {
+  function paintResult({ restoreTabFocus = false } = {}) {
     resultBody.replaceChildren();
     const order = state.order;
+    if (state.photographyMode === 'studio' && (state.results.length > 0 || state.batchTotal > 0)) {
+      const completed = state.results.filter((item) => item.status === 'success');
+      const failed = state.results.filter((item) => item.status === 'failed');
+      const pending = state.results.filter((item) => item.status === 'pending');
+      const cards = state.results.map((item) => {
+        const pose = poseById(item.posePreset);
+        if (item.status === 'pending') {
+          return h('div', { class: 'studio-batch__card' }, [
+            h('div', { class: 'stage' }, [h('span', { class: 'spinner' }), h('span', { text: `${pose?.label ?? '姿势'}生成中` })]),
+          ]);
+        }
+        if (item.status === 'failed') {
+          return h('div', { class: 'studio-batch__card' }, [
+            h('div', { class: 'stage' }, [h('span', { text: `${pose?.label ?? '姿势'}生成失败` })]),
+            h('p', { class: 'error-text', text: item.errorMessage ?? '本次不扣费，可单独重试。' }),
+          ]);
+        }
+        if (item.status === 'unknown') {
+          return h('div', { class: 'studio-batch__card' }, [
+            h('div', { class: 'stage' }, [h('span', { text: `${pose?.label ?? '姿势'}结果未确认` })]),
+            h('p', { class: 'error-text', text: item.errorMessage ?? '请到“试穿记录”确认本次订单状态。' }),
+          ]);
+        }
+        const url = `/api/results/${item.resultFile}?k=${encodeURIComponent(item.resultToken ?? '')}`;
+        return h('figure', { class: 'studio-batch__card' }, [
+          h('div', { class: 'canvas' }, [h('img', { src: url, alt: `${pose?.label ?? '棚拍'}效果` })]),
+          h('figcaption', { class: 'studio-batch__caption' }, [
+            h('span', { text: pose?.label ?? '棚拍姿势' }),
+            h('a', { href: url, download: `无影棚-${pose?.id ?? 'pose'}-AI生成.jpg`, text: '下载' }),
+          ]),
+        ]);
+      });
+      resultBody.append(...[
+        h('div', { class: 'result__head' }, [
+          h('h3', { class: 'result__title', text: '无影棚成片' }),
+          h('span', { class: 'result__meta', text: `${completed.length}/${state.batchTotal} 张完成` }),
+        ]),
+        h('p', { class: 'result__meta', text: '固定纯白无缝背景与柔光，只改变姿势；每张独立扣费，失败独立退款。' }),
+        h('div', { class: 'studio-batch' }, cards),
+        failed.length > 0 && h('p', { class: 'error-text', text: `${failed.length} 个姿势失败，费用已退回。` }),
+        h('p', { class: 'ai-note', text: 'AI 生成效果仅供参考，实物以商品页面描述为准' }),
+      ].filter(Boolean));
+      liveStatus.textContent = completed.length === state.batchTotal
+        ? `无影棚三姿势已完成，共 ${completed.length} 张。`
+        : pending.length === 0
+          ? `无影棚生成结束，${completed.length} 张完成，${failed.length} 张失败。`
+          : `无影棚成片正在生成，已完成 ${completed.length}/${state.batchTotal} 张。`;
+      return;
+    }
     if (!order) {
       if (state.person) {
         resultBody.append(
@@ -575,20 +659,51 @@ export function renderStudio(root, ctx, preset) {
       );
       return;
     }
+    if (order.status !== 'success') {
+      resultBody.append(
+        h('div', { class: 'stage' }, [h('span', { text: '结果尚未确认' })]),
+        h('p', { class: 'error-text', text: order.errorMessage ?? '请到“试穿记录”确认本次订单状态。' }),
+        h('button', { type: 'button', class: 'btn', text: '查看试穿记录', onclick: () => ctx.onNavigate('me') }),
+      );
+      return;
+    }
     const resultUrl = `/api/results/${order.resultFile}?k=${encodeURIComponent(order.resultToken ?? '')}`;
     const tabs = h('div', { class: 'segmented', role: 'tablist', 'aria-label': '查看方式' });
     for (const key of ['result', 'original', 'compare']) {
-      tabs.append(h('button', {
+      const tab = h('button', {
         type: 'button',
         class: `segment${state.tab === key ? ' is-active' : ''}`,
         role: 'tab',
+        id: `result-tab-${key}`,
         'aria-selected': state.tab === key ? 'true' : 'false',
+        'aria-controls': 'result-tabpanel',
+        tabindex: state.tab === key ? '0' : '-1',
         text: TAB_LABEL[key],
         onclick: () => {
           state.tab = key;
-          paintResult();
+          paintResult({ restoreTabFocus: true });
+          tabs.querySelector(`#result-tab-${key}`)?.focus({ preventScroll: true });
         },
-      }));
+      });
+      tab.addEventListener('keydown', (event) => {
+        const keys = ['result', 'original', 'compare'];
+        const current = keys.indexOf(state.tab);
+        const next = event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? keys.length - 1
+            : event.key === 'ArrowRight'
+              ? (current + 1) % keys.length
+              : event.key === 'ArrowLeft'
+                ? (current - 1 + keys.length) % keys.length
+                : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        state.tab = keys[next];
+        paintResult({ restoreTabFocus: true });
+        tabs.querySelector(`#result-tab-${state.tab}`)?.focus({ preventScroll: true });
+      });
+      tabs.append(tab);
     }
 
     let view;
@@ -602,6 +717,9 @@ export function renderStudio(root, ctx, preset) {
     } else {
       view = h('div', { class: 'canvas' }, [h('img', { src: resultUrl, alt: '搭配试穿效果' })]);
     }
+    view.id = 'result-tabpanel';
+    view.setAttribute('role', 'tabpanel');
+    view.setAttribute('aria-labelledby', `result-tab-${state.tab}`);
 
     resultBody.append(
       h('div', { class: 'result__head' }, [
@@ -618,39 +736,150 @@ export function renderStudio(root, ctx, preset) {
         text: '下载效果图（含 AI 标识）',
       }),
     );
+    if (restoreTabFocus) resultBody.querySelector(`#result-tab-${state.tab}`)?.focus({ preventScroll: true });
   }
 
-  function pollJob(jobId) {
+  function pollJob(jobId, orderId, onSettled) {
     stopPolling();
-    state.poll = setInterval(async () => {
+    let inFlight = false;
+    let cancelled = false;
+    let settled = false;
+    const settle = (order) => {
+      if (settled) return;
+      settled = true;
+      onSettled?.(order);
+    };
+    const settleUnknown = (errorMessage) => {
+      const order = { ...state.order, status: 'unknown', errorMessage };
+      settle(order);
+      return order;
+    };
+    async function tick() {
+      if (cancelled || inFlight) return;
       // 用户切走页面后 root 会从文档里摘掉：不停下来就会一直轮询到进程退出。
       if (!root.isConnected) {
         stopPolling();
+        settleUnknown('页面已离开，请到“试穿记录”确认结果。');
         return;
       }
+      inFlight = true;
       // 队列等待和生成超时由后端负责；页面跟随实际终态，避免提前放弃长工作流。
       try {
         const payload = await api(`/api/jobs/${jobId}`);
+        if (cancelled || !root.isConnected) {
+          stopPolling();
+          settleUnknown('页面已离开，请到“试穿记录”确认结果。');
+          return;
+        }
         state.job = payload;
         if (payload.status === 'success' || payload.status === 'failed') {
           stopPolling();
-          const res = await api(`/api/orders/${state.order.id}`);
+          const res = await api(`/api/orders/${orderId}`);
+          if (cancelled || !root.isConnected) {
+            settleUnknown('页面已离开，请到“试穿记录”确认结果。');
+            return;
+          }
           state.order = res.order;
-          if (!ctx.demoMode) await ctx.refreshBalance();
+          if (!ctx.demoMode) await ctx.refreshBalance().catch(() => {});
           paintResult();
           updateSubmit();
+          settle(res.order);
         } else {
           updateSubmit();
         }
       } catch {
         stopPolling();
-        state.job = { status: 'failed', stage: 'failed' };
-        state.order = { ...state.order, status: 'failed', errorMessage: '网络中断，未能确认结果；可稍后在“订单与说明”查看。' };
+        const errorMessage = '网络中断，结果尚未确认；可稍后在“试穿记录”查看';
+        state.job = { status: 'unknown', stage: 'failed' };
+        state.order = { ...state.order, status: 'unknown', errorMessage };
         paintResult();
         updateSubmit();
-        toast('网络不稳定，结果可能仍在生成，可稍后在“订单与说明”查看');
+        toast(errorMessage);
+        settle(state.order);
+      } finally {
+        inFlight = false;
       }
-    }, 1500);
+    }
+    state.poll = setInterval(() => void tick(), 250);
+    void tick();
+  }
+
+  async function createOrder(person, pieces, options = {}) {
+    const body = {
+      sessionId: getSessionId(),
+      person,
+      fit: options.fit ?? state.fit,
+      prompt: (options.prompt ?? state.prompt).trim(),
+      pieces,
+    };
+    if (ctx.model) body.model = ctx.model;
+    const mode = options.photographyMode ?? state.photographyMode;
+    if (mode === 'studio') {
+      body.photographyMode = 'studio';
+      body.studioPreset = options.studioPreset ?? state.studioPreset;
+      body.posePreset = options.posePreset;
+    }
+    const payload = await api('/api/orders', { method: 'POST', body });
+    if (typeof payload.balanceCents === 'number') ctx.onBalanceChanged(payload.balanceCents);
+    return payload;
+  }
+
+  async function waitForOrder(payload) {
+    const orderId = payload.order?.id ?? payload.orderId;
+    state.order = { id: orderId, status: 'pending' };
+    state.job = { status: 'queued', stage: 'queued' };
+    paintResult();
+    updateSubmit();
+    return new Promise((resolve) => pollJob(payload.jobId, orderId, resolve));
+  }
+
+  async function submitStudio(person, pieces, options) {
+    const poses = state.posePresets.length === 3
+      ? [...state.posePresets]
+      : recommendedPoses(pieces);
+    state.posePresets = poses;
+    state.batchTotal = poses.length;
+    state.batchIndex = 0;
+    state.batchMode = options.photographyMode;
+    state.batchStudioPreset = options.studioPreset;
+    state.results = poses.map((posePreset) => ({ posePreset, status: 'pending' }));
+    paintResult();
+    updateSubmit();
+    for (const [index, posePreset] of poses.entries()) {
+      if (!root.isConnected || state.batchMode !== options.photographyMode) return;
+      state.batchIndex = index;
+      state.results[index] = { posePreset, status: 'pending' };
+      paintResult();
+      updateSubmit();
+      try {
+        const payload = await createOrder(person, pieces, { ...options, posePreset });
+        const order = await waitForOrder(payload);
+        if (!root.isConnected) return;
+        state.results[index] = {
+          ...order,
+          posePreset,
+          status: order.status === 'success' ? 'success' : order.status === 'failed' ? 'failed' : 'unknown',
+        };
+      } catch (error) {
+        const unknown = !error.status;
+        state.results[index] = {
+          posePreset,
+          status: unknown ? 'unknown' : 'failed',
+          errorMessage: unknown ? '网络中断，订单状态未确认；请到“试穿记录”查看。' : error.message,
+        };
+        toast(`${poseById(posePreset)?.label ?? '姿势'}：${state.results[index].errorMessage}`);
+      }
+      paintResult();
+      updateSubmit();
+    }
+    state.order = null;
+    state.job = null;
+    state.batchMode = null;
+    state.batchStudioPreset = null;
+    state.batchIndex = poses.length;
+    paintResult();
+    updateSubmit();
+    if (window.innerWidth < 620) resultBody.scrollIntoView({ behavior: 'auto', block: 'center' });
   }
 
   async function submit() {
@@ -668,24 +897,30 @@ export function renderStudio(root, ctx, preset) {
       return;
     }
     submitBtn.disabled = true;
+    const request = {
+      person: state.person,
+      pieces: pieces.map((piece) => ({ ...piece, source: { ...piece.source } })),
+      photographyMode: state.photographyMode,
+      studioPreset: state.studioPreset,
+      fit: state.fit,
+      prompt: state.prompt.trim(),
+    };
     try {
-      const body = {
-        sessionId: getSessionId(),
-        person: state.person,
-        fit: state.fit,
-        prompt: state.prompt.trim(),
-        pieces,
-      };
-      if (ctx.model) body.model = ctx.model;
-      const payload = await api('/api/orders', { method: 'POST', body });
+      if (request.photographyMode === 'studio') {
+        state.results = [];
+        state.batchIndex = 0;
+        state.batchTotal = 0;
+        await submitStudio(request.person, request.pieces, request);
+        return;
+      }
+      const payload = await createOrder(request.person, request.pieces, request);
       const orderId = payload.order?.id ?? payload.orderId;
       state.order = { id: orderId, status: 'pending' };
       state.job = { status: 'queued', stage: 'queued' };
-      if (typeof payload.balanceCents === 'number') ctx.onBalanceChanged(payload.balanceCents);
       state.tab = 'result';
       paintResult();
       updateSubmit();
-      pollJob(payload.jobId);
+      pollJob(payload.jobId, orderId);
       resultBody.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (error) {
       toast(error.message);
@@ -745,6 +980,126 @@ export function renderStudio(root, ctx, preset) {
     }));
   }
 
+  const photographyButtons = h('div', { class: 'segmented', role: 'group', 'aria-label': '摄影模式' });
+  for (const mode of [
+    { id: 'preserve', label: '普通试穿' },
+    { id: 'studio', label: '无影棚成片' },
+  ]) {
+    photographyButtons.append(h('button', {
+      type: 'button',
+      class: `segment${mode.id === state.photographyMode ? ' is-active' : ''}`,
+      'aria-pressed': mode.id === state.photographyMode ? 'true' : 'false',
+      dataset: { photographyMode: mode.id },
+      text: mode.label,
+      onclick: () => {
+        const busy = Boolean(state.order && state.order.status === 'pending') || (state.batchTotal > 0 && state.batchIndex < state.batchTotal);
+        if (busy) return;
+        state.photographyMode = mode.id;
+        state.results = [];
+        state.batchTotal = 0;
+        state.order = null;
+        state.job = null;
+        state.results = [];
+        state.batchIndex = 0;
+        state.batchTotal = 0;
+        for (const button of photographyButtons.children) {
+          const on = button.dataset.photographyMode === mode.id;
+          button.classList.toggle('is-active', on);
+          button.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        paintResult();
+        updateSubmit();
+      },
+    }));
+  }
+
+  const studioPresetSelect = h('select', { id: 'studio-preset', 'aria-label': '无缝棚背景' });
+  for (const preset of ctx.config.studioPresets ?? []) {
+    studioPresetSelect.append(h('option', { value: preset.id, text: `${preset.label} · ${preset.hint}` }));
+  }
+  studioPresetSelect.value = state.studioPreset;
+  studioPresetSelect.addEventListener('change', () => {
+    if (state.batchTotal > 0 && state.batchIndex < state.batchTotal) {
+      studioPresetSelect.value = state.batchStudioPreset ?? state.studioPreset;
+      return;
+    }
+    state.studioPreset = studioPresetSelect.value;
+  });
+  const studioPresetHint = h('p', { class: 'field__hint' });
+  const studioPhotoPanel = h('div', { class: 'studio-photo__presets', hidden: state.photographyMode !== 'studio' }, [
+    h('div', { class: 'field' }, [
+      h('label', { class: 'field__label', for: 'studio-preset', text: '无缝棚背景' }),
+      studioPresetSelect,
+      studioPresetHint,
+    ]),
+    h('div', { class: 'studio-photo__poses' }),
+    h('div', { class: 'studio-photo__pose-tools' }, [
+      h('p', { class: 'field__hint', text: '三个槽位都可以换成 PoseWear 里的其它姿势；同一套姿势不能重复。' }),
+      h('button', {
+        type: 'button',
+        class: 'btn btn--sm',
+        text: '恢复推荐',
+        onclick: () => {
+          state.poseSelectionTouched = false;
+          paintStudioPanel();
+        },
+      }),
+    ]),
+    h('p', { class: 'field__hint', text: '三张依次生成并分开保存；背景、机位与光位固定，只改变姿势。每张独立订单，失败独立退款。' }),
+  ]);
+
+  function selectPose(index, value) {
+    if (!(ctx.config.posePresets ?? []).some((pose) => pose.id === value)) return;
+    if (state.posePresets.some((pose, poseIndex) => poseIndex !== index && pose === value)) {
+      toast('三个姿势不能重复，请换一个姿势');
+      paintStudioPanel();
+      return;
+    }
+    state.posePresets = state.posePresets.map((pose, poseIndex) => poseIndex === index ? value : pose);
+    state.poseSelectionTouched = true;
+    paintStudioPanel({ focusPoseIndex: index });
+  }
+
+  function paintStudioPanel({ focusPoseIndex = -1 } = {}) {
+    studioPhotoPanel.hidden = state.photographyMode !== 'studio';
+    if (studioPhotoPanel.hidden) return;
+    const preset = (ctx.config.studioPresets ?? []).find((item) => item.id === state.studioPreset);
+    studioPresetHint.textContent = preset?.hint ?? '';
+    const recommended = recommendedPoses();
+    const current = state.posePresets;
+    const valid = current.length === 3
+      && new Set(current).size === 3
+      && current.every((id) => poseById(id));
+    if (!state.poseSelectionTouched || !valid) state.posePresets = recommended;
+    const poses = [...state.posePresets];
+    const list = studioPhotoPanel.querySelector('.studio-photo__poses');
+    list.replaceChildren(...poses.map((id, index) => {
+      const pose = poseById(id);
+      const select = h('select', {
+        class: 'studio-photo__select',
+        'aria-label': `第 ${index + 1} 个姿势`,
+        onchange: (event) => selectPose(index, event.currentTarget.value),
+      }, (ctx.config.posePresets ?? []).map((option) => h('option', {
+        value: option.id,
+        text: `${option.label} · ${option.posewearId}`,
+        disabled: option.id !== id && poses.includes(option.id),
+        selected: option.id === id,
+      })));
+      return h('div', { class: 'studio-photo__pose' }, [
+        h('span', { class: 'studio-photo__index', text: `0${index + 1}` }),
+        h('img', { src: pose?.referenceUrl, alt: `${pose?.label ?? id}姿势参考`, loading: 'lazy' }),
+        h('span', {}, [
+          h('strong', { text: pose?.label ?? id }),
+          h('small', { text: pose?.hint ?? '' }),
+        ]),
+        select,
+      ]);
+    }));
+    if (focusPoseIndex >= 0) {
+      list.querySelectorAll('.studio-photo__select')[focusPoseIndex]?.focus({ preventScroll: true });
+    }
+  }
+
   addBtn.addEventListener('click', () => {
     if (state.pieces.length >= MAX_PIECES) return;
     state.pieces.push({ slot: '', subtype: '', layer: 'auto', source: null });
@@ -755,7 +1110,18 @@ export function renderStudio(root, ctx, preset) {
     state.prompt = promptInput.value;
     promptCounter.textContent = `${[...state.prompt].length}/${MAX_PROMPT_CHARS}`;
   });
+  entriesEl.addEventListener('click', () => queueMicrotask(paintStudioPanel));
+  photographyButtons.addEventListener('click', () => {
+    // 按钮自己的点击处理先更新模式，再重绘姿势推荐。
+    queueMicrotask(paintStudioPanel);
+  });
   submitBtn.addEventListener('click', () => void submit());
+
+  if (studioUnsupported) {
+    for (const button of fitButtons.children) button.disabled = true;
+    promptInput.disabled = true;
+    if (state.photographyMode === 'studio') state.photographyMode = 'preserve';
+  }
 
   root.append(
     h('section', { class: 'page-head' }, [
@@ -775,6 +1141,7 @@ export function renderStudio(root, ctx, preset) {
             pieceCountTag,
           ]),
           resultBody,
+          liveStatus,
         ]),
       ]),
       h('div', { class: 'studio__controls' }, [
@@ -795,8 +1162,18 @@ export function renderStudio(root, ctx, preset) {
           ]),
           hintEl,
           entriesEl,
+          h('div', { class: 'studio-photo' }, [
+            h('div', { class: 'field' }, [
+              h('span', { class: 'field__label', text: '成片方式' }),
+              photographyButtons,
+            ]),
+            studioPhotoPanel,
+          ]),
         ]),
         h('section', { class: 'card' }, [
+          studioUnsupported ? h('p', { class: 'field__hint', text: ctx.model === 'idm/idm-vton'
+            ? 'IDM-VTON：逐件试穿衣裤裙，保持照片原比例。鞋袜/配饰请选其它图片模型；同部位叠穿可能替换内层。此实验模型不执行版型、补充编辑或无影棚姿势重建。'
+            : 'ComfyUI 拼图工作流只接收人物与服装参考图，不执行无影棚姿势重建。' }) : null,
           h('div', { class: 'studio__options' }, [
             h('div', { class: 'field' }, [
               h('span', { class: 'field__label', text: '版型' }),
@@ -822,6 +1199,7 @@ export function renderStudio(root, ctx, preset) {
 
   paintPerson();
   paint();
+  paintStudioPanel();
   paintResult();
 
   // 内置模特：默认就把人物照填好，用户一进来就能直接点「开始试穿」。

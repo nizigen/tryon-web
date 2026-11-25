@@ -8,6 +8,7 @@ import { HttpError } from './errors.mjs';
  */
 
 export const MODEL_LABELS = {
+  'idm/idm-vton': 'IDM-VTON · 逐件试穿（实验）',
   'comfyui/foxbaze-tryon': '工作流 · Qwen 试穿 LoRA（实验）',
   'codex/gpt-image-2.5': 'GPT Image 2.5',
   'codex/gpt-image-2': 'GPT Image 2',
@@ -17,6 +18,9 @@ export const MODEL_LABELS = {
 };
 
 const TIERS = {
+  'idm/idm-vton': [
+    { id: 'idm', label: '逐件实验档 · 衣裤裙', quality: 'medium', size: '768x1024', priceCents: 0, costCents: 0 },
+  ],
   'comfyui/foxbaze-tryon': [
     { id: 'workflow', label: '工作流实验档 · 最多三件', quality: 'medium', size: '832x1248', priceCents: 0, costCents: 0 },
   ],

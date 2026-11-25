@@ -79,6 +79,7 @@ export function renderWardrobe(root, ctx) {
   const orderStatusText = h('span');
   const orderStatus = h('p', { class: 'stylist__status', hidden: true }, [orderSpinner, orderStatusText]);
   const resultEl = h('div', { class: 'stylist__result-img-wrap' });
+  const studioHandoff = h('button', { type: 'button', class: 'btn', text: '去无影棚拍 3 张' });
 
   // ---- 数据 ----
   async function loadItems({ focusId } = {}) {
@@ -196,6 +197,19 @@ export function renderWardrobe(root, ctx) {
     if (!piecesFromSelection().length) return;
     ctx.pendingPieces = piecesFromSelection();
     ctx.pendingPerson = { image: state.person, isDefault: state.personIsDefault };
+    ctx.onNavigate('studio');
+  }
+
+  function suggestionToStudio() {
+    const pieces = piecesFromSuggestion();
+    if (!pieces.length) return;
+    if (['idm/idm-vton', 'comfyui/foxbaze-tryon'].includes(ctx.model)) {
+      toast('当前模型不支持无影棚姿势重建，请在设置中切换支持多参考图的图片模型');
+      return;
+    }
+    ctx.pendingPieces = pieces;
+    ctx.pendingPerson = { image: state.person, isDefault: state.personIsDefault };
+    ctx.pendingPhotographyMode = 'studio';
     ctx.onNavigate('studio');
   }
 
@@ -363,6 +377,7 @@ export function renderWardrobe(root, ctx) {
     const suggestion = state.suggestion;
     if (!suggestion) {
       suggestionEl.append(h('p', { class: 'field__hint', text: '还没有搭配建议，写下今天的场合或感觉，再点「帮我选」。' }));
+      studioHandoff.disabled = true;
       updateOrderButton();
       return;
     }
@@ -379,8 +394,10 @@ export function renderWardrobe(root, ctx) {
     if (suggestion.reason) suggestionEl.append(h('p', { class: 'stylist__reason', text: suggestion.reason }));
     const missing = Array.isArray(suggestion.missing) ? suggestion.missing.filter((key) => SLOT_BY_KEY[key]) : [];
     if (missing.length) suggestionEl.append(h('p', { class: 'stylist__missing', text: `衣橱里还缺：${missing.map(slotLabel).join('、')}，可先补充再生成。` }));
+    studioHandoff.disabled = piecesFromSuggestion().length === 0;
     updateOrderButton();
   }
+  studioHandoff.addEventListener('click', () => suggestionToStudio());
 
   async function suggest() {
     const request = requestInput.value.trim();
@@ -623,7 +640,10 @@ export function renderWardrobe(root, ctx) {
           suggestionEl,
           h('div', { class: 'stylist__order' }, [
             h('div', { class: 'stylist__person' }, [stylistPersonPreview, h('div', {}, [personNote, personBtn]), personInput]),
-            h('span', { class: 'push-end' }, [orderBtn]),
+            h('span', { class: 'push-end' }, [
+              orderBtn,
+              studioHandoff,
+            ]),
           ]),
           orderStatus,
           resultEl,

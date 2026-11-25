@@ -7,15 +7,18 @@ import { fileURLToPath } from 'node:url';
 import { loadCookies } from './cookies.mjs';
 import { HttpError } from './errors.mjs';
 import { generateImage, deadline } from './imageapi.mjs';
-import { listGenerationModels as listModels, preflightGeneration } from './generation.mjs';
+import { listGenerationModels as listModels, preflightGeneration, supportsPhotographyMode } from './generation.mjs';
 import { checkWorkflow } from './comfyui.mjs';
-import { buildOutfitPrompt, buildTryonPrompt, CATEGORIES, FITS, GARMENT_TYPES, garmentTypeLabel, isCategory, isGarmentType, isSlot, normalizeLayer, orderPieces, sanitizeText, SLOTS, slotLabel } from './prompt.mjs';
+import { checkIdm, IDM_ID } from './idm.mjs';
+import { buildOutfitPrompt, buildTryonPrompt, CATEGORIES, DEFAULT_POSE_PRESET, DEFAULT_STUDIO_PRESET, FITS, GARMENT_TYPES, garmentTypeLabel, effectiveLayer, isCategory, isGarmentType, isSlot, normalizeLayer, normalizePosePreset, normalizeStudioPreset, orderPieces, POSE_PRESETS, sanitizeText, SLOTS, slotLabel, STUDIO_PRESETS } from './prompt.mjs';
 import { priceCatalog, resolveTier } from './pricing.mjs';
 import { assertString, decodeImage, MAX_BODY_BYTES, MAX_IMAGE_BYTES, MAX_PROMPT_CHARS, sniff } from './validate.mjs';
 
 /** 单次搭配件数上限（不含人物照），见 OUTFIT_MODEL.md 第 2 节。 */
 const MAX_PIECES = 5;
 const MAX_ACCESSORY = 2;
+/** OpenAI 兼容图片编辑接口当前最多接收 16 张参考图；人物与姿势图各占一张。 */
+const MAX_REFERENCE_IMAGES = 16;
 
 function isDemoMode(env) {
   return env.DEMO_MODE === '1';
@@ -203,6 +206,16 @@ async function handleConfig(context) {
   } catch {
     gatewayReachable = false;
   }
+  const posePresets = POSE_PRESETS.map(({ id, label, hint, posewearId, referenceFile }) => ({
+    id,
+    label,
+    hint,
+    posewearId,
+    referenceUrl: `/posewear/${referenceFile}`,
+  }));
+  const defaultPosePreset = posePresets.some(({ id }) => id === DEFAULT_POSE_PRESET)
+    ? DEFAULT_POSE_PRESET
+    : posePresets[0].id;
   sendJson(response, 200, {
     ...priceCatalog(models),
     demoMode: isDemoMode(env),
@@ -211,6 +224,10 @@ async function handleConfig(context) {
     slots: SLOTS,
     garmentTypes: GARMENT_TYPES,
     fits: FITS,
+    studioPresets: STUDIO_PRESETS.map(({ id, label, hint }) => ({ id, label, hint })),
+    posePresets,
+    defaultStudioPreset: DEFAULT_STUDIO_PRESET,
+    defaultPosePreset,
     limits: { imageBytes: MAX_IMAGE_BYTES, requestBytes: MAX_BODY_BYTES, promptChars: MAX_PROMPT_CHARS, maxPieces: MAX_PIECES },
   });
 }
@@ -332,6 +349,37 @@ function parseExtra(value) {
   return extra.trim();
 }
 
+/** 影棚参数在取图和扣费前定型；普通试穿未传摄影模式时保持旧行为。 */
+function parsePhotography(input) {
+  const mode = input?.photographyMode ?? 'preserve';
+  if (!['preserve', 'studio'].includes(mode)) {
+    throw new HttpError(400, 'INVALID_REQUEST', '摄影模式无效', 'photographyMode');
+  }
+  if (mode !== 'studio') {
+    return { photographyMode: 'preserve', studioPreset: null, posePreset: null };
+  }
+  return {
+    photographyMode: 'studio',
+    studioPreset: normalizeStudioPreset(input?.studioPreset ?? DEFAULT_STUDIO_PRESET),
+    posePreset: normalizePosePreset(input?.posePreset ?? DEFAULT_POSE_PRESET),
+  };
+}
+
+async function poseReferenceDataUrl(posePreset) {
+  const pose = POSE_PRESETS.find((item) => item.id === normalizePosePreset(posePreset));
+  const path = resolve(PUBLIC_DIR, 'posewear', pose.referenceFile);
+  if (!withinPublic(path)) throw new HttpError(500, 'POSE_REFERENCE_INVALID', '姿势参考图配置有误');
+  const buffer = await readFile(path).catch(() => null);
+  const mime = buffer ? sniff(buffer) : null;
+  if (!buffer || !mime) throw new HttpError(500, 'POSE_REFERENCE_INVALID', '姿势参考图缺失或格式不支持');
+  return `data:${mime};base64,${buffer.toString('base64')}`;
+}
+
+function preflightGenerationReferenceCount(model, count) {
+  if (count <= MAX_REFERENCE_IMAGES) return;
+  throw new HttpError(400, 'REFERENCE_LIMIT', `${model} 最多接收 ${MAX_REFERENCE_IMAGES} 张参考图，请减少单品`, 'pieces');
+}
+
 /** 旧单件字段的 category 映射到穿搭格子；上衣里 jacket/coat 属于外套格。 */
 function legacySlot(category, garmentType) {
   if (category === 'bottoms') return 'bottom';
@@ -357,7 +405,7 @@ async function legacyGarment(context, { product }, input) {
 }
 
 /**
- * 多件穿搭：校验 slot 白名单、每格件数、dress 与 top/bottom 互斥、总件数，
+ * 多件穿搭：校验 slot 白名单、格子×层级叠穿、dress 与 top/bottom 互斥、总件数，
  * 并按 source.kind 取每件的图。所有图必须在扣费前取到。
  */
 async function resolvePieces(context, rawPieces) {
@@ -368,7 +416,6 @@ async function resolvePieces(context, rawPieces) {
   if (rawPieces.length > MAX_PIECES) {
     throw new HttpError(400, 'INVALID_REQUEST', `单次最多搭配 ${MAX_PIECES} 件单品`, 'pieces');
   }
-  const counts = new Map();
   const resolved = [];
   for (const raw of rawPieces) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -376,12 +423,6 @@ async function resolvePieces(context, rawPieces) {
     }
     const { slot } = raw;
     if (!isSlot(slot)) throw new HttpError(400, 'INVALID_REQUEST', '未知的穿搭格子', 'pieces');
-    const limit = slot === 'accessory' ? MAX_ACCESSORY : 1;
-    const used = (counts.get(slot) ?? 0) + 1;
-    if (used > limit) {
-      throw new HttpError(400, 'INVALID_REQUEST', slot === 'accessory' ? '配饰最多 2 件' : '每个格子最多一件', 'pieces');
-    }
-    counts.set(slot, used);
 
     let garmentType = raw.garmentType === undefined || raw.garmentType === null
       ? ''
@@ -427,6 +468,21 @@ async function resolvePieces(context, rawPieces) {
     }
     resolved.push({ slot, layer, garmentType: garmentType || slotLabel(slot), name, dataUrl, product });
   }
+  // 叠穿语义：同一格子允许跨穿着层级多件（如上衣的内层+中层），同格同层仍只能一件；
+  // 配饰沿用本身的 2 件上限，不参与层级去重。
+  const seen = new Set();
+  for (const piece of resolved) {
+    if (piece.slot === 'accessory') continue;
+    const key = `${piece.slot}:${effectiveLayer(piece)}`;
+    if (seen.has(key)) {
+      throw new HttpError(400, 'INVALID_REQUEST', `同一格子的同一穿着层级最多一件（${slotLabel(piece.slot)}·${piece.layer}）`, 'pieces');
+    }
+    seen.add(key);
+  }
+  const accessoryCount = resolved.filter((piece) => piece.slot === 'accessory').length;
+  if (accessoryCount > MAX_ACCESSORY) {
+    throw new HttpError(400, 'INVALID_REQUEST', '配饰最多 2 件', 'pieces');
+  }
   const hasDress = resolved.some((piece) => piece.slot === 'dress');
   const hasTopOrBottom = resolved.some((piece) => piece.slot === 'top' || piece.slot === 'bottom');
   if (hasDress && hasTopOrBottom) {
@@ -443,6 +499,7 @@ async function handleOrderCreate(context) {
   if (!session) throw new HttpError(404, 'SESSION_NOT_FOUND', '会话不存在或已失效');
   const demoMode = isDemoMode(env);
   const legacy = !Array.isArray(input?.pieces);
+  const photography = parsePhotography(input);
 
   // 旧的单件字段（productId/category/garmentType 或 sourceId/garment）先解析出分类与补充要求。
   let legacyInput = null;
@@ -465,6 +522,9 @@ async function handleOrderCreate(context) {
     : assertString(requested, 'model', { max: 120 });
   if (!model || !models.includes(model)) {
     throw new HttpError(400, 'MODEL_UNAVAILABLE', '所选模型已不可用，请重新加载配置', 'model');
+  }
+  if (!supportsPhotographyMode(model, photography.photographyMode)) {
+    throw new HttpError(400, 'MODEL_MODE_UNSUPPORTED', '当前模型不执行无影棚背景和姿势重建，请切换到普通试穿或支持多参考图的图片模型', 'photographyMode');
   }
   const tier = resolveTier(model, input?.tier);
   decodeImage(input?.person, 'person');
@@ -493,11 +553,24 @@ async function handleOrderCreate(context) {
   await preflightGeneration(model, pieces, env, fetchImpl, clock.signal);
   const priceCents = demoMode ? 0 : tier.priceCents;
   const costCents = demoMode ? 0 : tier.costCents;
-  const prompt = buildOutfitPrompt({ pieces, fit: input?.fit ?? 'regular', extra });
+  const prompt = buildOutfitPrompt({
+    pieces,
+    fit: input?.fit ?? 'regular',
+    extra,
+    photographyMode: photography.photographyMode,
+    studioPreset: photography.studioPreset ?? DEFAULT_STUDIO_PRESET,
+    posePreset: photography.posePreset ?? DEFAULT_POSE_PRESET,
+  });
   const slots = pieces.map((piece) => piece.slot);
   const productName = pieces.length === 1
     ? (product?.name ?? (pieces[0].name || '自定义试穿'))
     : '搭配试穿';
+  const poseReference = photography.photographyMode === 'studio'
+    ? await poseReferenceDataUrl(photography.posePreset)
+    : null;
+  if (poseReference) preflightGenerationReferenceCount(model, pieces.length + 2);
+  // 上游按 size 约束输出画幅；无影棚提示词与产品契约固定为 2:3，不能只靠模型自行裁切。
+  const outputSize = photography.photographyMode === 'studio' ? '1024x1536' : tier.size;
 
   // 先占位再扣费：占位失败不扣钱；扣费后任何异常都全额退回。演示模式不校验余额、不扣费。
   tryon.reserve(sessionId);
@@ -516,11 +589,12 @@ async function handleOrderCreate(context) {
       model,
       tier: tier.tier,
       quality: tier.quality,
-      size: tier.size,
+      size: outputSize,
       category,
       garmentType,
       slots,
       pieces: pieces.map(({ slot, layer = 'auto', garmentType, name }) => ({ slot, layer, garmentType, name })),
+      ...photography,
       prompt,
       priceCents,
       costCents,
@@ -533,9 +607,10 @@ async function handleOrderCreate(context) {
       payload: {
         model,
         prompt,
-        referenceImages: [input.person, ...pieces.map((piece) => piece.dataUrl)],
+        referenceImages: [input.person, ...pieces.map((piece) => piece.dataUrl), ...(poseReference ? [poseReference] : [])],
+        pieces: pieces.map(({ slot, layer = 'auto', garmentType, name }) => ({ slot, layer, garmentType, name })),
         quality: tier.quality,
-        size: tier.size,
+        size: outputSize,
       },
       start: false,
     });
@@ -579,6 +654,9 @@ async function handleOrderList(context) {
     category: order.category,
     garmentType: order.garmentType,
     slots: order.slots ?? [],
+    photographyMode: order.photographyMode ?? 'preserve',
+    studioPreset: order.studioPreset ?? null,
+    posePreset: order.posePreset ?? null,
     priceCents: order.priceCents,
     status: order.status,
     jobId: order.jobId,
@@ -598,6 +676,9 @@ async function handleOrderRead(context) {
   sendJson(response, 200, {
     order: {
       ...rest,
+      photographyMode: order.photographyMode ?? 'preserve',
+      studioPreset: order.studioPreset ?? null,
+      posePreset: order.posePreset ?? null,
       hasResult: Boolean(order.resultFile),
       resultToken: order.resultFile ? issueResultToken(order.resultFile) : null,
     },
@@ -833,7 +914,12 @@ async function handleWorkflowStatus({ response, env, fetchImpl, clock }) {
   sendJson(response, 200, await checkWorkflow(env, fetchImpl, clock.signal));
 }
 
+async function handleIdmStatus({ response, env, fetchImpl, clock }) {
+  sendJson(response, 200, await checkIdm(env, fetchImpl, clock.signal));
+}
+
 const ROUTES = [
+  { method: 'GET', pattern: /^\/api\/workflows\/idm\/status$/, handler: handleIdmStatus },
   { method: 'GET', pattern: /^\/api\/workflows\/status$/, handler: handleWorkflowStatus },
   { method: 'GET', pattern: /^\/api\/config$/, handler: handleConfig },
   { method: 'GET', pattern: /^\/api\/settings$/, handler: handleSettingsRead },

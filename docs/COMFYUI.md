@@ -73,7 +73,11 @@ node --env-file-if-exists=.env scripts/comfyui.mjs --export foxbaze-api.json
 4. 单件通过后试三件，检查脸、身材、手、服装印花与层次；分别测内外层互换是否改变遮挡。鞋/袜/配饰精度没有单独验证，不能把整套覆盖视为已通过。
 5. 验证断连/显存不足：应用订单应失败，无应用余额损失。工作流实验档应用价格为零，GPU 租金由平台单独收取；失败或超时不意味着云端停止计费。
 
-采样基线遵循作者：steps=30、cfg=2.5、euler/simple、denoise=1、shift=3、CFGNorm=1、LoRA strength=1。图在每次运行时生成唯一上传名与随机 seed。
+采样基线遵循作者：steps=30、cfg=2.5、euler/simple、denoise=1、shift=3、CFGNorm=1、LoRA strength=1。**seed 固定用作者的 1088，不做随机化**：2026-11-24 在 RTX 4080 SUPER 上实测，seed=1088 的全部 8 次运行均正常试穿，而随机 seed（如 2099280733）会把结果塌缩成「原图 + 服装平铺」的拼图复刻。代价是同一组输入永远得到同一张图；alpha LoRA 稳定后再评估恢复随机 seed。
+
+对齐句是敏感点：正向提示词第一行必须是作者原句 `Style the person in the top of the image, with every article of clothing on the bottom`（逐字，含 "on the bottom"）。实测把这一句改成 "in the bottom row" 会让模型输出双栏对比图、人物不换衣；正文里出现 "bottom row" 无害。`src/comfy-workflow.mjs` 有守卫测试锁住这句措辞。
+
+「补充要求」的文字会被拼进正向提示词。实测规则：版型/穿搭类补充（如 "make the shirt fit slim"、中文「把下摆塞进裤子里」）结果干净；身份保持类补充（如「按人脸与身形保持人物一致」、"Keep the face and body shape unchanged"）会让原衣服袖口从新衣下露出残影——这类要求本来就被固定提示词覆盖，用户应避免在补充要求里重复。
 
 ## 照片与任务清理
 

@@ -100,7 +100,8 @@ export async function generateWorkflow({ referenceImages, prompt = '' }, env, fe
       if (uploaded.subfolder) throw invalid();
       images.push(uploaded.name);
     }
-    const graph = workflowGraph({ images, prompt, env, seed: Math.floor(Math.random() * 2 ** 32) });
+    // Retain the reviewed baseline seed for reproducibility; it is not a quality guarantee.
+    const graph = workflowGraph({ images, prompt, env });
     const submitted = await request(endpoint, '/prompt', fetchImpl, clock.signal, { method: 'POST', body: { prompt: graph, client_id: runId } });
     if (typeof submitted.prompt_id !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(submitted.prompt_id)) throw invalid();
     promptId = submitted.prompt_id;

@@ -44,7 +44,7 @@ export function renderSettings(root, ctx) {
       ]));
       return;
     }
-    body.append(modelCard(settings), workflowCard(), gatewayCard(settings), cookiesCard(settings), demoCard(settings));
+    body.append(modelCard(settings), idmCard(), workflowCard(), gatewayCard(settings), cookiesCard(settings), demoCard(settings));
   }
 
   function modelCard(settings) {
@@ -77,6 +77,25 @@ export function renderSettings(root, ctx) {
       toast(error.message);
       paint();
     }
+  }
+
+  function idmCard() {
+    const status = h('p', { class: 'field__hint', role: 'status', text: '点击检查模型加载与服务连接；检查不会出图。' });
+    const button = h('button', { type: 'button', class: 'btn', text: '检查 IDM-VTON 连接' });
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      status.textContent = '正在检查…';
+      try { status.textContent = (await api('/api/workflows/idm/status')).message; }
+      catch (error) { status.textContent = errorText(error); }
+      finally { button.disabled = false; }
+    });
+    return h('section', { class: 'card' }, [
+      h('h2', { class: 'section__title', text: 'IDM-VTON 逐件试穿（实验）' }),
+      h('p', { class: 'field__hint', text: '在上方选择 IDM-VTON。上衣/外套、下装、连衣裙按顺序逐件试穿，照片保持原比例。鞋袜与配饰请使用其它图片模型；同部位叠穿可能覆盖内层，不保证领口或下摆保留。' }),
+      button, status,
+      h('p', { class: 'field__hint', text: '应用实验档不扣余额，GPU 租金另计。IDM 只使用单品图与衣物描述，不执行任意版型或补充编辑；其它图像模型的原提示词与比例不变。' }),
+    ]);
   }
 
   function workflowCard() {

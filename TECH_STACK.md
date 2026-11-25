@@ -1,5 +1,15 @@
 # TECH_STACK — OpenAI 兼容图片服务 + 零依赖 Node 后端
 
+## W6：无影棚成片
+
+沿用 Node 原生 HTTP 服务、OpenAI 兼容图片编辑接口和原生 HTML/CSS/ESM 前端，不新增依赖、模型 SDK、数据库或批量任务引擎。背景与姿势目录由 `src/prompt.mjs` 单一维护，经 `/api/config` 下发；三姿势由现有订单 API 顺序创建三个任务，继续复用现有并发限制、扣费、退款、结果票据与 24 小时 TTL。
+
+## W5：已实测 IDM-VTON 栈
+
+本地仍为零依赖 Node v24/native fetch，不引入 SDK；以 `IDM_BASE_URL`（仅服务端）连接自建 `GET /health`、`POST /tryon` HTTP 服务。协议图片是纯 base64（不是 data URL），响应为内联 PNG base64。总时限 `IDM_TIMEOUT_MS` 默认 600000ms，限制 1000..3600000ms；其它模型时限不变。部署服务仅监听远端 loopback:8190，通过 SSH 隧道接本地 loopback:8190。
+
+远端 Python 3.12.3 独立 venv、复用已装 torch 2.8.0+cu128 / torchvision 0.23.0+cu128；diffusers **0.25.0**（0.27.2 与官方自定义 UNet 的 PositionNet 不兼容）、transformers 4.40.2、huggingface_hub 0.23.5、accelerate 0.30.0、numpy 1.26.4、onnxruntime 1.19.2、opencv-python-headless 4.10.0.84、scikit-image 0.24.0。官方源码固定 `06ad89ba2f78d77a5ba21d7f7fd392254971fda2`；十个权重逐件核对官方固定修订 SHA 后使用。官方自定义 SDXL pipeline、独立 try-on / garment UNet、Parsing/OpenPose/DensePose 实测成功。应用不再依赖已删除的 Qwen 权重来生成 IDM 结果。
+
 ## 运行时与依赖
 | 层 | 版本/契约 | 说明 |
 | --- | --- | --- |

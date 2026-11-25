@@ -1,5 +1,52 @@
 # progress — 会话日志（操作、变更、验证、错误）
 
+## 2026-11-25 · W6 无影棚三姿势成片
+
+- 参考 `https://www.douyin.com/user/MS4wLjABAAAA3RFCRkYH-WnsUHFSmHOl2XZR53gMQ66mCEZxtkIqxV5H56ySFFQqOdmhno0g9XF-?...modal_id=7692413820165265856`，下载 10 张图文证据到 `evidence/reference-sicii-studio/`。提炼固定无缝背景、全身留白、略低机位、柔光与极淡鞋底影，仅改变姿势。
+- 后端 `src/prompt.mjs` 增加 3 个棚拍背景、6 个姿势和按搭配推荐三姿势；普通提示词保留原姿势与背景，无影棚提示词允许重建摄影层，继续锁定身份、身体比例和所有服装。`src/app.mjs` 在取图/扣费前校验并持久化 `photographyMode/studioPreset/posePreset`，旧请求缺省 `preserve`。
+- 前端工作台增加普通/无影棚切换、背景下拉、三姿势预览、三张顺序订单与结果卡；衣橱 AI 选搭增加“去无影棚拍 3 张”。复用现有单任务并发、逐单扣费退款、结果票据，没有新增批量状态机。
+- 修复：三张完成后 `batchIndex` 未推进到总数，按钮会停在“正在生成 3/3”；现在完成后恢复。真实运行又发现空失败摘要被渲染为可见 `null`，改为过滤空节点，并补 Chromium 断言。
+- 验证：`test/frontend.test.mjs` 11/11 通过，覆盖三姿势真实临时订单、三个姿势字段、按钮恢复和不存在 `null` 文本；语法检查通过。
+- 真实页面：OpenCLI/Chrome 在 390×844 走通“衣橱选两件 → 当前搭配 → 去试穿 → 无影棚”；真实图片服务 GPT Image 2.5 顺序完成 3/3，三张均为 744×2114 PNG。逐张与 PoseWear 对照后确认：手位和重心对应，人物身份、黑长直、身体比例及米色针织衫/灰色百褶裙保持一致，固定白棚机位连续。第三张鞋底保留极淡接触影，视觉上仍有自然接地且没有明显投影。真实图属用户人物资产，未纳入仓库。
+- PoseWear 固定素材补齐来源和 CC0 1.0 授权说明；六个本地文件与人物资产工程中的原始文件 SHA-256 逐一相等。README 已增加“衣橱/AI 选搭 → 三个姿势 → 三张独立无影棚成片”的产品入口。
+- 最终复核：提示词/API 与前端/可访问性两条独立审查均未发现仍可复现的 P1/P2；全量 `node --test` 214/214、四项语法检查通过。重启 `127.0.0.1:43130` 后，OpenCLI 实测无影棚切换、三姿势参考图、禁止重复与恢复推荐入口，浏览器控制台无报错。
+- 真实 AI 选搭：绕过当前演示模式的规则分支，以当前 22 件衣橱连续请求 `codex/gpt-6.1-sol` 三组不同场景，均返回合法搭配，耗时 4.7–8.7 秒；完整证据落 `evidence/ai-stylist-live-20261125.json`。目视与语义复核发现选搭仅基于商品文字，舒适度与不露腿约束判断仍不可靠，未将其误记为验收通过。
+- 文档同步 PRD / APP_FLOW / BACKEND_STRUCTURE / FRONTEND_GUIDELINES / IMPLEMENTATION_PLAN / TECH_STACK。`git diff --check` 仍只报既有 `lessons.md:18 new blank line at EOF`，未混入本轮修改。
+
+## 2026-11-25 · FASHN v1.5 调研与 IDM app 接入收尾
+
+- 用户改选 FASHN v1.5：经 OpenCLI `web read` + GitHub MCP 双源核验官方 repo（HEAD `7c0f10af3f91ad4048fe9729c470a13ef905d25a`）与 HF 卡。结论：972M 像素空间 MMDiT（源码头注释自认 adapted from FLUX.1），无 VAE、576×864、tops/bottoms/one-pieces 三类、DWPose 条件、bf16/Ampere+、~8GB VRAM、H100 5s。官方**无** LoRA/训练代码（全仓 0 命中、issues #1-7 无关、HF 仓只有 model.safetensors）；独立核验子代理确认 forward 全部走 `module(x)` 调用、无绕权重写法，`get_peft_model`+显式 target_modules（qkv/proj/linear1/linear2）可注入，DoubleStreamBlock 绕过 SelfAttention.forward 不影响 PEFT；第三方有自建训练管线痕迹（haat-studio、vton-custom），非官方。证据与边界记 findings.md "FASHN v1.5"。
+- IDM app 接入完成并两轮独立复审：无 P1。修掉测试暴露的 7 项契约问题（纯 base64、后段输入预检、返回 sniff、非 data URL 等）；`src/idm.mjs`、generation/app/tryon/pricing 接线、settings.js/studio.js 能力提示、`.env` 加 `IDM_BASE_URL=http://127.0.0.1:8190`、`IDM_TIMEOUT_MS=600000`。全量 `node --test` **193 pass / 0 fail / 1 skip**（Chromium 未安装时跳过，据实记录）。远端服务子代理独立修掉 5 项（letterbox+crop 保比例 361×1024、DensePose 官方 setup_config+create_context 缓存、busy 门禁前置、坏图/EXIF 400、契约测试 13/13），本地=远端 SHA256 `35308857…edea6e19`，真实 HTTP 15.23s 输出 aspect_delta 0.00004，服务 PID 21463 监听远端 loopback:8190。
+- 复审遗留 P2：①IDM 选中时 studio 鞋/饰入口仍在（后端 400 兜底，符合规范字面）；②Node 无返回图比例断言；③IDM 选中已禁用 fit/extra（本轮新增）。OpenCLI 真机验收进行中：设置页已见 IDM 选项与健康态，但本机 Chrome 全部窗口 `state:minimized` → `visibilityState=hidden` → 原生点击被拒（`Native input requires a visible browser page`）；`browser chrome call windows.update` 参数契约已核实为 `<method> [argsJSON]` 两段式，恢复窗口后继续。FASHN 页面验收与 IDM 页面下单均未完成，目标保持 active。
+
+
+## 2026-11-24 · goal round2：主UNet正式校验通过
+
+- clean下载主UNet分段账本已覆盖0..11965769774完整区间后，单独计算整件SHA；结果为官方 `046b775cb9bbc67635fc3b148bb03bfe00496ce2f9ce8488a82fdb388669a521`，正式匹配。未再以st_size当完成判据。
+- 第二个UNet继续下载，记录时完整段约71.2%；最终核验/首图门禁PID17989保持等待。没有IDM diffusion成品图，未接app。
+- 基于官方契约的常驻HTTP服务草稿artifacts/idm_server_v2.py已准备，包含请求大小/参数范围、GPU互斥与启动权重SHA校验；尚未部署，先等官方CLI单件质量验证。语法检查通过，已送独立只读审查。
+- 阅读vibe-coding与现有六规范相关章节，为后续W5接入准备；不改app原提示词链和图片比例，尚未进行新业务代码改动。
+
+## 2026-11-24 · goal round1：下载及官方源码版本对齐
+
+- 预处理仍已完成并有mask/DensePose图片证据。官方pipeline加载前新增导入检查：diffusers0.27.2缺PositionNet，与官方源码不配套；将隔离venv对齐diffusers0.25.0后，官方SDXL pipeline与双自定义UNet三个类导入成功。未改变base环境。
+- 一次提前SHA检查在并发下载尚未全部完成时执行：text_encoder_2匹配，unet不匹配。因为文件含未完成的稀疏区，这不能证明旧前缀损坏；已明确纠正该推断。为避免继续信任旧hf_hub前缀，主动清空两个UNet未验证partial并从零下载，确实增加了下载量。
+- 当前下载PID17914（idm-fresh-download.py），日志/root/autodl-tmp/idm-fresh-download.log，按完成账本idm-fresh-ledger.jsonl统计进度，不用st_size代替；记录时unet完成区间约2.52GB/11.97GB（21%）。text_encoder_2完整partial仍保留，等待最终SHA复核。
+- 旧门禁已替换：PID17989运行idm-finish-and-run.py，日志idm-finish-and-run.log；等待新下载结束后逐件重新SHA核验、转正全部十件、原子写receipt，再启动一次官方单件上衣推理。若任何文件或SHA失败则停止，不会把失败/等待冒充出图。
+- 尚待真实diffusion推理、两段串联、视觉检查与app接入，目标保持active。
+
+## 2026-11-24 · 用户选2删除旧权重，IDM-VTON部署检查点
+
+- 用户明确选择删除Qwen四件权重；已核对精确绝对路径并删除目标文件与4个软链、停止ComfyUI。磁盘当时由14G空闲恢复至43G；IDM权重和本地衣橱未动。
+- app构图补白实验已回退；src中无image-size/sizes/pad_person；未落地精简prompt。重启了本地服务（host job `pwsh-1434c3cd4eaa43c5`），43130/api/config HTTP200。27项聚焦工作流测试通过。旧8189 SSH隧道已停止。
+- 安装问题实证：3个遗留pip同时装同一venv且重复拉CUDA；已按精确argv/PID停止。复用系统torch与CUDA目录和对应dist-info，venv独立安装diffusers0.27.2/transformers4.40.2/numpy1.26.4，核心import实际通过。scikit-image0.24.0等图像模块也通过导入。
+- 官方源码固定commit `06ad89ba2f78d77a5ba21d7f7fd392254971fda2`。独立只读审查核实自定义SDXL双UNet、mask方向、OpenPose关键点与DensePose图像之区别；修正了草稿中的不存在模块与错误pipeline。当前执行入口是artifacts/idm-infer-official.py；artifacts/idm_server.py仍为旧未部署草稿，不应使用。
+- 官方实际支持入口为upper_body/lower_body/dresses，无鞋category。同部位两层保留没有官方保证，只能实测，撤回此前训练分布等过度推断；findings与lessons已更正。
+- 真实预处理：服务器执行`--prepare-only`用时7.95秒完成，mask与DensePose图已取回并查看（artifacts/test/idm-shirt-mask.png、idm-shirt-dense.png）。未加载diffusion权重，未假称已试穿。
+- 下载：hf-mirror慢，切到ModelScope `AI-ModelScope/IDM-VTON`；十件模型的Size/Sha256与官方逐项一致，固定MS revision `740677aa0027fe4640e2b619a83a57d9be23e321`，1MiB请求206正确/0.54秒。16路32MiB分段，Content-Range和长度校验、pwrite后fsync再记账、最终整文件SHA通过才转正。服务器PID17037，日志/root/autodl-tmp/idm-ms-download.log，账本idm-parallel-ledger.jsonl。部分文件为稀疏写入，不使用st_size当进度。
+- 已启动门禁等待任务PID17687（日志idm-first-stage.log），只在idm-receipt.json出现后运行单件官方CLI，下载进程若退出且无收据则失败停下；不自动宣布视觉通过。最新主UNet已写到10.6GB范围，仍须全部分段与SHA过门。
+- 未完成：双UNet最终校验、真实单件出图、两段串联的视觉质量与本地app接入。目标保持进行中，无git提交。
+
 ## 2025-11-22 · v2 改造：从本地工作台到付费试穿产品
 
 ### 输入与决策
@@ -495,4 +542,79 @@ ode --test\ 137/137 通过。
 - 独立只读审查：发现「Reference images 2-N 范围改写损坏」与「前端固定 16 分钟轮询短于后端可配超时」两项 P2，均已修复并补断言；上传返回非空 subfolder 时在提交前 502 拒绝。复审最终版无阻断项。
 - 真实服务（43130 演示模式）`/api/config` 模型目录含 `comfyui/foxbaze-tryon`；`/api/workflows/status` 未配置时如实返回 `configured:false ready:false`；设置页渲染工作流卡片与检查按钮；`scripts/comfyui.mjs --export` 成功导出 API 图，`--check` 未配置时退出 1。
 
-**未验（明确边界）**：4090/ComfyUI 真实出图、显存峰值与耗时、两三件真人保真度、GGUF 精度与 LoRA 兼容、海外实例路由；本轮没有部署、下载权重或付费探测。远端 ComfyUI 会保留上传与历史，与应用「人像不落盘」承诺不同，手册已单列。
+**未验（明确边界）**：4090/ComfyUI 真实出图、显存峰值与耗时、两三件真人保真度、GGUF 精度与 LoRA 兼容、海外实例路由；基础轮没有部署、下载权重或付费探测。远端 ComfyUI 会保留上传与历史，与应用「人像不落盘」承诺不同，手册已单列。
+
+## 2026-11-24 · 已授权云端真实部署（17:51 检查点，尚未出图）
+
+- 用户随后提供其已租实例并授权SSH部署，目标是原版Qwen+FoxBaze真实单件试穿并接回本地。实例报告RTX4080SUPER/32760MiB、驱动595.71.05、Python3.12.3、torch2.8.0+cu128；与初始4090选型不同，按真实硬件记录。
+- ComfyUI固定commit `da8bd08e48deee74d9f6c3bc00aed365b00ec209`，启动成功；15类核心节点object_info通过。依赖安装INSTALL_OK；未装示例模板/内嵌文档包不影响已检查API节点。启动对CUDA12.8给出性能警告，真实耗时尚未验证，没有据警告自动升级镜像。
+- 旧并发下载恢复只看st_size，实测最大.part有780140544B稀疏空洞，且读取超时后进程已退出。已停止使用错误恢复路径，按完整成功段日志的字节区间与SEEK_DATA求交恢复；保留约7872MiB已证实数据，需补约21367MiB。
+- 已核对官方固定commit/LFS SHA；ModelScope三个工件的Sha256/Size与目标完全相等，并钉定具体文件提交，LoRA仍钉HF提交。恢复工具8项测试通过（含错位网格、稀疏洞、错误内容不转正、全文件校验后才转正）；独立只读审查的SHA失败重跑陷阱已加显式整件重下选项，Python3.12满足file_digest要求。
+- 新下载使用云端既有requests2.31 Session、16并发/HF2并发；完成段fsync后记录成功账本，最终必须官方SHA一致。17:51启动云端恢复进程5136；仍在下载，不把排队/端口/文件大小冒充真实出图。
+- 本机.env已配置SSH隧道地址（不含密钥、gitignored），应用尚待权重完成后重启接入；真实GPU任务尚未提交，后续耗时/显存/最终结果待追加。
+
+## 2026-11-24 · 云端真实试穿出图完成 + 「不换衣」根因修复
+
+**接续上一检查点**：17:51 启动的 download-repair 已跑完，四件权重全部通过官方 SHA 校验（`ALL_MODELS_VERIFIED 2556.2`，云端 `model-receipt.json` 的 `verifiedSha256` 与目标逐一相等），ComfyUI 0.46.0 在实例 `127.0.0.1:8188` 运行，torch 2.8.0+cu128、CUDA 可用。
+
+**本地接入**
+- 私钥 `artifacts/autodl-key` 在 Windows 上权限过宽被 ssh 拒载（UNPROTECTED PRIVATE KEY FILE），用 `icacls /inheritance:r /grant:r <user>:F` 收紧后隧道建立成功。
+- SSH 隧道 `127.0.0.1:8189 → 远端 8188`，`GET /system_stats` 与 `/object_info`（1087 个节点类）经隧道可达。
+- 本地 `DEMO_MODE=1` 服务跑在 43130；`/api/workflows/status` 返回 `configured:true ready:true`。
+
+**真实出图与发现的两个真 bug**
+
+第一次端到端（`artifacts/probe-workflow.mjs`）成功但结果错：模型把「人物原样 + 服装平铺」的拼图复刻了一遍，人物没有换衣。逐项隔离（全部为真实 GPU 出图，832×1248，单次约 160–177s）：
+
+| 变量 | 结果 |
+| --- | --- |
+| 作者工作流 JSON 与本实现的参数（UNET/CLIP/VAE、LoRA strength=1、shift=3、CFGNorm=1、30 步/cfg2.5/euler/simple/denoise1、832×1248） | 完全一致，排除接线问题；远端日志 `840 patches attached` 证明 LoRA 已生效 |
+| 对齐句改回作者原句 `...every article of clothing on the bottom` | ✅ 正常换衣 |
+| 对齐句写成本项目的 `...in the bottom row` | ❌ 输出「原图 \| 换衣图」双栏对比图，人物不换衣 |
+| 作者原句 + 完整长英文提示词（含 "bottom row" 正文） | ✅ 正常换衣（证明正文措辞无害，敏感点只在首句） |
+| seed=1088（作者默认） | ✅ 全部 8 次运行正常 |
+| 随机 seed（如 2099280733） | ❌ 塌缩成拼图复刻，且字节级可复现 |
+| 补充要求为版型类（"make the shirt fit slim" / 中文「把下摆塞进裤子里」） | ✅ 干净 |
+| 补充要求为身份保持类（「按人脸与身形保持人物一致」/ "Keep the face and body shape unchanged"） | ⚠️ 原衣袖子从新衣下露出残影 |
+
+**修复**
+- `src/comfy-workflow.mjs`：`ALIGNMENT` 恢复作者原句（只把 woman 换成性别中立的 person），并在注释里写下实测依据；`mapReferencePrompt` 不动（正文里 "bottom row" 已验证无害）。
+- `src/comfyui.mjs`：去掉随机 seed，固定用作者推荐的 1088，注释说明随机种子的塌缩现象。
+- `test/comfy-workflow.test.mjs`：新增守卫测试断言对齐句与作者原句逐字一致且不含 "bottom row"。
+- `docs/COMFYUI.md`：写入 seed 固定理由、对齐句敏感点、补充要求的两类效果边界。
+
+**验证**
+- `node --test`（`TRYON_TEST_CHROME` 指向本机 Chrome）：**184 pass / 0 fail / 0 skipped**。
+- 重启 43130 服务后完整端到端复跑 3 次，均 `WORKFLOW_FLOW_OK`（160.3s / 162.5s / 162.2s），结果经 `/api/results` 正常取回并落盘 `artifacts/test/workflow-result.png`。
+- 远端实测显存：常驻 28072 MiB / 32760 MiB（约占 85%），GPU 利用率任务间回落 0%。
+
+**未验 / 边界**
+- 未测三件套装、内外层互换、鞋袜配饰的保真度；alpha LoRA 质量本身有波动（同一提示词不同 seed 表现差异大，最终那张无附加文案的图下摆与原衣有渐变混合）。
+- 显存只记录了任务间与常驻值，未取采样峰值；未验证 24GB 以下显卡能否跑 fp8 全链路。
+- 云端 `ComfyUI/input`（1.9M）与 `output`（13M，14 张 `FoxBaze_TryOn_*.png`）仍保留本次上传件与出图，实例停机前需按租用平台方式清理。
+- 隧道进程随本机 ssh 会话存在，会话断开即失效；服务本身未做开机自启。
+
+## 2026-11-24 · 三层上装叠穿实测：alpha LoRA 分布外，已放开格子规则并记录边界
+
+**背景**：用户要求「本地接入远端工作流跑一个上装的三层叠穿」。为支持叠穿场景放开了产品规则，随后用 8 次真实出图证明 alpha LoRA 不支持同部位叠穿。
+
+**产品规则变更（src/app.mjs）**
+- 旧规则「每个格子最多一件」与叠穿语义矛盾：`layer` 字段、`orderPieces` 的层级排序、提示词的「wear outside …」都是为同格多层设计的。改为**同一格子允许跨穿着层级多件，同格同层仍只能一件**；配饰沿用 2 件上限不参与层级去重（修复了「两件配饰默认同为 outer 层被误伤」的测试失败）。
+- 错误信息改为「同一格子的同一穿着层级最多一件（格子·层级）」。
+- 新增测试「同一格子跨穿着层级可以叠穿，同层重复仍被拒绝」：top/inner + top/middle + top/outer 三件成功下单（slots 顺序 ['top','top','outer']），同层重复 400。全量 `node --test` **185 pass / 0 fail**。
+
+**叠穿真实出图证据（全部走本地 43130 → 隧道 → 远端 ComfyUI，164s 上下）**
+- 3 件（衬衫 inner + 毛衣 middle + 斗篷 outer，生活照图）：复刻拼图 ❌
+- 3 件全白底图（衬衫 + 毛衣 + 黑呢大衣）：复刻拼图 ❌（排除参考图质量因素）
+- 2 件同格跨层（衬衫 inner + 毛衣 middle）：复刻拼图 ❌
+- 两段式第二段（已穿衬衫的 AI 成品当人物 + 毛衣）：输出「人物 + 服装平铺」双栏 ❌
+- 2 件跨格（衬衫 top/middle + 黑呢大衣 top/outer）：半成功 ⚠️ 衬衫领子作为内层出现在领口，但外层大衣未上身（`artifacts/test/top-outer-result.png`）
+- 对照：作者训练分布是「不同部位组合」（上衣+裤子+帽子，官方示例一次 3 件成功）。
+
+**结论与教训（findings.md 顶部已记）**：alpha LoRA 的「多件」= 不同身体部位各一件；同部位多层叠穿是训练分布外。调研阶段未把这两个场景分开评估，属调研盲区，已记入 lessons。
+
+**淘宝找图过程**：淘宝搜索页（Chrome 有登录态）筛了 20+ 商品，下载了候选商品主图与相册图，白色呢大衣类目下全部是模特生活照、无白底平铺图；白底假设被后续「3 件全白底图仍失败」排除，图不再是变量。
+
+**改动的文件**：src/app.mjs（格子×层级校验）、test/api.test.mjs（叠穿规则测试）、findings.md、progress.md、lessons.md；artifacts/ 下新增 probe-layer3.mjs、probe-layer3-white.mjs、probe-layer2.mjs、probe-stack2.mjs、probe-top-outer.mjs 与对应结果图（git-ignored）。
+
+**未验 / 边界**：叠穿替代方案（Qwen-Image-Edit-2509 多参考、IDM-VTON、强编辑模型提示词叠穿）未实测；「上装+外套」半成功组合的稳定性未多采样；格子规则放开后前端多选交互未逐一复核（工作台选择器允许多件同格，服务端已放行）。

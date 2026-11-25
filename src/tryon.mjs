@@ -62,13 +62,14 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
     job.stage = 'generating';
     job.updatedAt = new Date().toISOString();
     try {
-      const { model, prompt, person, garment, referenceImages, quality, size } = job.payload;
+      const { model, prompt, person, garment, referenceImages, pieces, quality, size } = job.payload;
       // referenceImages 为多件穿搭提供的完整参考图数组；缺省时退回旧单件 [person, garment]。
       const images = Array.isArray(referenceImages) ? referenceImages : [person, garment];
       const { mimeType, buffer } = await generateTryon({
         model,
         prompt,
         referenceImages: images,
+        pieces,
         quality,
         size,
       }, env, fetchImpl, { timeoutMs });

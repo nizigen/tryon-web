@@ -1,5 +1,43 @@
 # Task Plan — TryOn Web v5
 
+## W6：无影棚三姿势成片（2026-11-25）
+- [x] 从 SiCii 参考图文提炼无缝背景、全身留白、略低机位、柔光和极淡接触影；保存 10 张证据图。
+- [x] 新增固定棚拍背景与姿势目录、服务端校验、订单持久化，以及普通/无影棚两套提示词契约。
+- [x] 工作台加入三姿势预览、顺序生成、三图结果与逐张下载；衣橱 AI 选搭可直接交接棚拍。
+- [x] 修复三张完成后的按钮卡在“正在生成 3/3”和失败摘要空节点显示 `null`。
+- [x] 390px 真实浏览器走通 AI 选搭 → 棚拍交接 → 三张成片 → 按钮恢复。
+- [x] GPT Image 2.5 真实生成三张纯白棚拍，逐张目视核对背景、全身构图、姿势、服装和人物。
+- [x] 补充 PoseWear 来源、CC0 授权与本地文件哈希说明；README 写明选搭到三张成片的完整路径。
+- [x] 独立代码与可访问性审查结果收口；提示词/API 与前端审查均未发现可复现的 P1/P2。
+- [x] 全量 `node --test`（214/214）与最终文档一致性复核通过；本地最新源码已重启并通过 OpenCLI 页面冒烟。
+
+## 当前执行：用户选方案2腾空间，改试IDM-VTON（2026-11-24）
+- [ ] 用户 2026-11-25 改选 FASHN v1.5 为下一候选：架构证据已核到源码级；LoRA 注入可行性（forward 路径与 target_modules）已由独立核验确认可接线，官方无训练代码，org 仓库扫描在途；暂不下载权重/不训练。
+- [ ] IDM-VTON 已接入 app 并通过 193 项回归；OpenCLI 验收停在 Chrome 全部窗口最小化（`visibilityState=hidden`，原生点击被拒），待恢复窗口后继续前台验收。
+
+- [x] 恢复app原提示词链与原拼图比例，移除补白实验；本地服务重新启动。
+- [x] 按用户明确授权，删除服务器Qwen四个权重及4个软链，停止ComfyUI；删除后空余43G。
+- [x] 隔离venv核心依赖导入通过：torch2.8.0+cu128、diffusers0.27.2、transformers4.40.2；复用torch/CUDA，清理重复安装进程。
+- [x] 独立核实官方commit及真实loader/mask/DensePose契约；源码95文件补齐并有固定commit。
+- [x] 找到ModelScope AI-ModelScope/IDM-VTON，十个权重的大小和SHA与官方逐项相等。
+- [ ] 双UNet改从零分段下载（PID17914），账本idm-fresh-ledger.jsonl，日志idm-fresh-download.log。不再复用hf_hub未证明连续的前缀；最终核验及推理门禁PID17989，日志idm-finish-and-run.log。早期SHA检查在并发尚未完成时做出，不能据此诊断损坏。
+- [x] 官方预处理真实运行完成（7.95秒）；mask及DensePose已取回查看。日志idm-preprocess-real.log。官方自定义UNet导入另发现PositionNet兼容问题，将venv diffusers从0.27.2对齐官方0.25.0后，三个官方pipeline/UNet类导入全部通过；不更改base环境。
+- [ ] 官方IDM-VTON单件上衣实际出图；再实验两段（上衣→下装或两层上衣），图片视觉检查后接app。
+- [ ] 鞋类无官方category，连续叠穿亦无内层保留契约；不把这些能力记为通过。
+
+以下FoxBaze记录为切换前历史，根因表述以findings.md顶部更正为准；现有Qwen权重已删除。
+
+## 云端真实试穿验证（2026-11-24，用户已授权 SSH 部署）
+- [x] SSH 连通与环境核实：RTX 4080 SUPER 32760MiB、PyTorch 2.8.0+cu128、Python 3.12.3。
+- [x] 固定ComfyUI版本并启动服务；15类核心节点object_info通过。
+- [x] 核对四个权重的固定commit与官方LFS SHA；ModelScope版本亦钉定且SHA相等；修复st_size续传空洞，恢复逻辑8项测试通过。
+- [x] 完成缺失分段下载（`ALL_MODELS_VERIFIED 2556.2s`），四件权重逐个与官方SHA对账后转正，`model-receipt.json` 记录 verifiedSha256 全部相等。
+- [x] SSH 隧道 127.0.0.1:8189 → 远端 8188，本地应用 `/api/workflows/status` 返回 configured/ready 均为 true。
+- [x] 真实单件出图跑通（832×1248，ComfyUI 执行约 171s、应用端到端 160–177s），结果经 `/api/results` 取回。
+- [x] 修掉「只复刻拼图不换衣」的根因：对齐句必须是作者原句，seed 固定 1088；全量 `node --test` 184/184。
+- [ ] 记录真实显存峰值；三件套装与内外层互换的保真度复核。
+- [ ] 云端上传件与 `FoxBaze_TryOn*` 输出、history 的清理（实例停机前）。
+
 ## 当前增量：叠穿层次与 ComfyUI 基础（2026-11-24）
 - [x] W1：上传/导入/编辑/工作台 layer 字段、持久化、提示词和图片顺序一致。
 - [x] W2：原版 Qwen-Image-Edit + FoxBaze Alpha 图生成器；只读预检/上传/提交/历史/结果适配。

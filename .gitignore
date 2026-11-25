@@ -10,3 +10,7 @@ data/cookies.json
 data/wardrobe.json
 data/wardrobe/
 data/browser-profile/
+
+# 实验证据与抓取内容留在本地：evidence/ 含真人照片，web-articles/ 是第三方内容。
+evidence/
+web-articles/

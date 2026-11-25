@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { createApp } from '../src/app.mjs';
 import { WORKFLOW_ID, workflowGraph } from '../src/comfy-workflow.mjs';
+import { IDM_ID } from '../src/idm.mjs';
 import { createSourceService } from '../src/source.mjs';
 import { createStore } from '../src/store.mjs';
 import { createTryonService } from '../src/tryon.mjs';
@@ -56,7 +57,11 @@ function makeFetch({ models = MODELS, fail = false, slowMs = 0, record = [] } = 
     } else {
       return new Response('not found', { status: 404 });
     }
-    record.push({ prompt, reference_images: referenceImages });
+    record.push({
+      prompt,
+      reference_images: referenceImages,
+      size: target.endsWith('/images/edits') ? options.body.get('size') : JSON.parse(options.body).size,
+    });
     return jsonResponse({ created: 1, data: [{ b64_json: PNG, mime_type: 'image/png' }] });
   };
 }
@@ -188,6 +193,13 @@ test('GET /api/config 返回模型目录、定价、分类与限制', async () =
     assert.equal(response.payload.categories.length, 3);
     assert.equal(response.payload.gateway.reachable, true);
     assert.ok(response.payload.limits.imageBytes > 0);
+    assert.ok(response.payload.studioPresets.some(({ id }) => id === 'clean-white-seamless'));
+    assert.ok(response.payload.posePresets.some(({ id }) => id === 'over-shoulder'));
+    const pose = response.payload.posePresets.find(({ id }) => id === 'over-shoulder');
+    assert.equal(pose.posewearId, 'P017');
+    assert.equal(pose.referenceUrl, '/posewear/P017.png');
+    assert.equal(response.payload.defaultStudioPreset, 'clean-white-seamless');
+    assert.ok(response.payload.posePresets.some(({ id }) => id === response.payload.defaultPosePreset));
   });
 });
 
@@ -608,6 +620,98 @@ test('多件搭配（top+bottom）下单成功且参考图按 top→bottom 排�
   });
 });
 
+test('棚拍模式保存固定背景与姿势，并把重拍方向写入提示词', async () => {
+  const record = [];
+  await withServer({ record }, async ({ call, store }) => {
+    const session = await createSession(call);
+    const created = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        sessionId: session.sessionId,
+        model: 'codex/gpt-image-2.5',
+        tier: 'standard',
+        person: PERSON,
+        photographyMode: 'studio',
+        studioPreset: 'clean-white-seamless',
+        posePreset: 'hand-behind-head',
+        pieces: [
+          { slot: 'outer', garmentType: '风衣', source: { kind: 'upload', image: PERSON } },
+          { slot: 'bottom', garmentType: '长裤', source: { kind: 'upload', image: PERSON } },
+        ],
+      }),
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.payload));
+    const job = await waitForJob(call, created.payload.jobId);
+    assert.equal(job.status, 'success');
+    const order = store.getOrder(created.payload.orderId);
+    assert.equal(order.photographyMode, 'studio');
+    assert.equal(order.studioPreset, 'clean-white-seamless');
+    assert.equal(order.posePreset, 'hand-behind-head');
+    assert.equal(order.size, '1024x1536');
+    assert.equal(record[0].size, '1024x1536');
+    assert.match(record[0].prompt, /PHOTOGRAPHY MODE: STUDIO/);
+    assert.match(record[0].prompt, /one hand resting behind the head/i);
+    assert.equal(record[0].reference_images.length, 4, '人物 + 外套 + 下装 + PoseWear 姿势图');
+    assert.match(record[0].reference_images[3], /^data:image\/png;base64,/, '姿势图固定放在参考图末尾');
+    const detail = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(detail.payload.order.photographyMode, 'studio');
+    assert.equal(detail.payload.order.posePreset, 'hand-behind-head');
+  });
+});
+
+test('旧订单详情与列表都把缺失的棚拍字段归一化', async () => {
+  await withServer({}, async ({ call, store }) => {
+    const session = await createSession(call);
+    const order = await store.createOrder({
+      sessionId: session.sessionId,
+      productName: '旧版试穿',
+      model: 'codex/gpt-image-2.5',
+      tier: 'standard',
+      slots: ['top'],
+      pieces: [{ slot: 'top', layer: 'auto', garmentType: '衬衫', name: '旧衬衫' }],
+      priceCents: 690,
+    });
+    const detail = await call(`/api/orders/${order.id}`, { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(detail.payload.order.photographyMode, 'preserve');
+    assert.equal(detail.payload.order.studioPreset, null);
+    assert.equal(detail.payload.order.posePreset, null);
+    const list = await call('/api/orders', { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(list.payload.orders[0].photographyMode, 'preserve');
+    assert.equal(list.payload.orders[0].studioPreset, null);
+    assert.equal(list.payload.orders[0].posePreset, null);
+  });
+});
+
+test('未知棚拍模板或姿势在扣费和建单前拒绝', async () => {
+  for (const [patch, field] of [
+    [{ studioPreset: 'unknown-studio' }, 'studioPreset'],
+    [{ posePreset: 'unknown-pose' }, 'posePreset'],
+    [{ posePreset: ['editorial-stand'] }, 'posePreset'],
+    [{ posePreset: { toString: null } }, 'posePreset'],
+  ]) {
+    await withServer({}, async ({ call, store }) => {
+      const session = await createSession(call);
+      const before = session.balanceCents;
+      const response = await call('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          sessionId: session.sessionId,
+          model: 'codex/gpt-image-2.5',
+          tier: 'standard',
+          person: PERSON,
+          photographyMode: 'studio',
+          ...patch,
+          pieces: [{ slot: 'top', garmentType: '针织衫', source: { kind: 'upload', image: PERSON } }],
+        }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(response.payload.error.field, field);
+      assert.equal(store.getSession(session.sessionId).balanceCents, before);
+      assert.equal(store.listOrders(session.sessionId).length, 0);
+    });
+  }
+});
+
 test('连衣裙与上衣/下装互斥返回 400 INVALID_REQUEST', async () => {
   await withServer({}, async ({ call }) => {
     const session = await createSession(call);
@@ -662,6 +766,34 @@ test('配饰最多 2 件', async () => {
     });
     assert.equal(response.status, 400);
     assert.equal(response.payload.error.field, 'pieces');
+  });
+});
+
+test('同一格子跨穿着层级可以叠穿，同层重复仍被拒绝', async () => {
+  await withServer({}, async ({ call }) => {
+    const session = await createSession(call);
+    const stacked = [
+      { slot: 'top', garmentType: '衬衫', layer: 'inner', source: { kind: 'upload', image: PERSON } },
+      { slot: 'top', garmentType: '毛衣', layer: 'middle', source: { kind: 'upload', image: PERSON } },
+      { slot: 'outer', garmentType: '外套', layer: 'outer', source: { kind: 'upload', image: PERSON } },
+    ];
+    const created = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON, pieces: stacked }),
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.payload));
+    assert.deepEqual(created.payload.order.slots, ['top', 'top', 'outer']);
+
+    const duplicated = [
+      { slot: 'top', garmentType: '衬衫', layer: 'inner', source: { kind: 'upload', image: PERSON } },
+      { slot: 'top', garmentType: 'T恤', layer: 'inner', source: { kind: 'upload', image: PERSON } },
+    ];
+    const rejected = await call('/api/orders', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: session.sessionId, model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON, pieces: duplicated }),
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.payload.error.field, 'pieces');
   });
 });
 
@@ -964,6 +1096,155 @@ test('工作流订单经上传、提交、历史和结果接口成功，零扣�
     assert.ok(record.paths.includes('/prompt'));
     assert.ok(record.paths.includes('/history/workflow-test'));
     assert.ok(record.paths.includes('/view'));
+  });
+});
+
+function makeIdmFetch({ record = [], ready = true, failStage = 0 } = {}) {
+  const imageFetch = makeFetch();
+  return async (url, options) => {
+    const target = new URL(url);
+    if (target.origin !== 'http://idm.test') return imageFetch(url, options);
+    if (target.pathname === '/health') return jsonResponse({ ok: true, pipeline: ready, engine: 'idm-vton' });
+    assert.equal(target.pathname, '/tryon');
+    const body = JSON.parse(options.body);
+    record.push(body);
+    if (record.length === failStage) return new Response('private server detail', { status: 500 });
+    return jsonResponse({ image: PNG, seconds: 1 });
+  };
+}
+
+test('IDM 目录与设置持久化使用原接口，健康检查不出图且不回服务地址', async () => {
+  const record = [];
+  await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ record }) }, async ({ call, store }) => {
+    const config = await call('/api/config');
+    const model = config.payload.models.find(({ id }) => id === IDM_ID);
+    assert.ok(model);
+    assert.equal(model.tiers[0].id, 'idm');
+    assert.equal(model.tiers[0].priceCents, 0);
+    assert.equal(model.tiers[0].size, '768x1024');
+    const status = await call('/api/workflows/idm/status');
+    assert.equal(status.status, 200);
+    assert.equal(status.payload.ready, true);
+    assert.doesNotMatch(JSON.stringify(status.payload), /idm.test|baseUrl|token/);
+    assert.equal(record.length, 0);
+    const patched = await call('/api/settings', { method: 'PATCH', body: JSON.stringify({ model: IDM_ID }) });
+    assert.equal(patched.status, 200);
+    assert.equal(store.getSettings().model, IDM_ID);
+    assert.equal((await call('/api/settings')).payload.model, IDM_ID);
+  });
+});
+
+test('IDM 未配置时只读状态明确未就绪，目录不宣称已连接', async () => {
+  await withServer({}, async ({ call }) => {
+    const status = await call('/api/workflows/idm/status');
+    assert.equal(status.status, 200);
+    assert.equal(status.payload.configured, false);
+    assert.equal(status.payload.ready, false);
+    assert.equal((await call('/api/config')).payload.models.some(({ id }) => id === IDM_ID), false);
+  });
+});
+
+test('IDM 订单链传递有序单品元数据及纯base64，保存原长提示词与真实结果票据', async () => {
+  const record = [];
+  const tagged = tag => `data:image/png;base64,${Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(tag)]).toString('base64')}`;
+  const shirt = tagged('shirt');
+  const jeans = tagged('jeans');
+  await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ record }) }, async ({ call, store, base, dir }) => {
+    const session = await createSession(call);
+    const created = await call('/api/orders', { method: 'POST', body: JSON.stringify({
+      sessionId: session.sessionId, model: IDM_ID, tier: 'idm', person: PERSON, prompt: '保持自然光线',
+      pieces: [
+        { slot: 'bottom', layer: 'middle', garmentType: 'jeans', source: { kind: 'upload', image: jeans } },
+        { slot: 'top', layer: 'inner', garmentType: 'shirt', source: { kind: 'upload', image: shirt } },
+      ],
+    }) });
+    assert.equal(created.status, 201);
+    assert.equal(created.payload.priceCents, 0);
+    const job = await waitForJob(call, created.payload.jobId);
+    assert.equal(job.status, 'success', JSON.stringify(job.error));
+    assert.equal(record.length, 2);
+    assert.deepEqual(record.map(item => item.category), ['upper_body', 'lower_body']);
+    assert.equal(record[0].person, PNG);
+    assert.equal(record[0].garment, shirt.split(',')[1]);
+    assert.equal(record[1].person, PNG);
+    assert.equal(record[1].garment, jeans.split(',')[1]);
+    assert.match(record[0].description, /shirt/);
+    const order = store.getOrder(created.payload.orderId);
+    assert.deepEqual(order.pieces.map(({ slot, layer }) => [slot, layer]), [['top', 'inner'], ['bottom', 'middle']]);
+    assert.match(order.prompt, /reference image 2 \(top:/);
+    assert.match(order.prompt, /保持自然光线/);
+    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+    const detail = await call(`/api/orders/${order.id}`, { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(detail.payload.order.hasResult, true);
+    const result = await fetch(`${base}/api/results/${detail.payload.order.resultFile}?k=${detail.payload.order.resultToken}`);
+    assert.equal(result.status, 200);
+    assert.deepEqual(Buffer.from(await result.arrayBuffer()), Buffer.from(PNG, 'base64'));
+    assert.doesNotMatch(await readFile(join(dir, 'state.json'), 'utf8'), /base64|referenceImages|dataUrl/);
+  });
+});
+
+test('IDM 鞋类或健康失败在占位与建单前结束，不扣费不上传', async () => {
+  for (const [ready, slots, code] of [[true, ['top', 'shoes'], 'IDM_SLOT'], [false, ['top'], 'WORKFLOW_UNAVAILABLE']]) {
+    const record = [];
+    await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ ready, record }) }, async ({ call, store, tryon }) => {
+      const session = await createSession(call);
+      const result = await call('/api/orders', { method: 'POST', body: JSON.stringify({
+        sessionId: session.sessionId, model: IDM_ID, person: PERSON,
+        pieces: slots.map(slot => ({ slot, garmentType: slot, source: { kind: 'upload', image: PERSON } })),
+      }) });
+      assert.equal(result.payload.error.code, code);
+      assert.deepEqual(store.listOrders(session.sessionId), []);
+      assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
+      assert.equal(record.length, 0);
+      assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+    });
+  }
+});
+
+test('IDM 与 ComfyUI 拼图工作流都不接受无法执行的无影棚模式', async () => {
+  const record = [];
+  for (const model of [IDM_ID, WORKFLOW_ID]) {
+    const env = model === IDM_ID ? { IDM_BASE_URL: 'http://idm.test' } : { COMFYUI_BASE_URL: 'http://comfy.test' };
+    const fetchImpl = model === IDM_ID ? makeIdmFetch({ record }) : makeWorkflowFetch();
+    await withServer({ env, fetchImpl }, async ({ call, store, tryon }) => {
+      const session = await createSession(call);
+      const result = await call('/api/orders', { method: 'POST', body: JSON.stringify({
+        sessionId: session.sessionId,
+        model,
+        person: PERSON,
+        photographyMode: 'studio',
+        studioPreset: 'clean-white-seamless',
+        posePreset: 'contrapposto',
+        pieces: [{ slot: 'top', garmentType: '衬衫', source: { kind: 'upload', image: PERSON } }],
+      }) });
+      assert.equal(result.status, 400);
+      assert.equal(result.payload.error.code, 'MODEL_MODE_UNSUPPORTED');
+      assert.equal(result.payload.error.field, 'photographyMode');
+      assert.deepEqual(store.listOrders(session.sessionId), []);
+      assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
+      assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+    });
+  }
+  assert.equal(record.length, 0);
+});
+
+test('IDM 第二阶段失败使整单失败，不把第一阶段半成品存为完成', async () => {
+  const record = [];
+  await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ failStage: 2, record }) }, async ({ call, store }) => {
+    const session = await createSession(call);
+    const created = await call('/api/orders', { method: 'POST', body: JSON.stringify({
+      sessionId: session.sessionId, model: IDM_ID, person: PERSON,
+      pieces: ['top', 'bottom'].map(slot => ({ slot, garmentType: slot, source: { kind: 'upload', image: PERSON } })),
+    }) });
+    assert.equal(created.status, 201);
+    const job = await waitForJob(call, created.payload.jobId);
+    assert.equal(job.status, 'failed');
+    assert.equal(job.error.code, 'WORKFLOW_FAILED');
+    const order = store.getOrder(created.payload.orderId);
+    assert.equal(order.status, 'failed');
+    assert.ok(!order.resultFile);
+    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
+    assert.equal(record.length, 2);
   });
 });
 

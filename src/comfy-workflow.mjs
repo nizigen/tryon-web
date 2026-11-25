@@ -32,8 +32,16 @@ export const DEFAULT_MODELS = Object.freeze({
   lora: 'Try_On_Qwen_Edit_Lora.safetensors',
 });
 
-/** 作者示例里的对齐句（性别中立改写），说明人物在上、服装在下。 */
-const ALIGNMENT = 'Style the person in the top of the image, with every article of clothing in the bottom row';
+/**
+ * 作者示例里的对齐句，只把 woman 换成性别中立的 person。
+ *
+ * 措辞必须与作者原句逐字一致（"on the bottom"，不是 "in the bottom row"）：
+ * 2026-11-24 在 RTX 4080 SUPER 上用同一拼图与同一权重实测，把这一句改成
+ * "in the bottom row" 会让模型输出「原图 | 换衣图」的双栏对比图，人物根本不换衣；
+ * 恢复原句后正常上身。正文里出现 "bottom row" 无害（完整长提示词实测正常），
+ * 敏感点只在这一句。
+ */
+const ALIGNMENT = 'Style the person in the top of the image, with every article of clothing on the bottom';
 
 const DEFAULT_SEED = 1088;
 const DEFAULT_PREFIX = 'FoxBaze_TryOn';
