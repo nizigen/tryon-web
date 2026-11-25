@@ -6,6 +6,15 @@ const SLOT_KEYS = ['top', 'outer', 'bottom', 'dress', 'hosiery', 'shoes', 'acces
 const MAX_REQUEST_CHARS = 200;
 const MAX_ACCESSORY = 2;
 
+/**
+ * 挑一套只需要约 160 token 的 JSON，但当前对话模型是推理模型：推理 token 与输出共用
+ * 这一个预算，实测同一提示词推理消耗在 390–940 之间浮动。预算给小了不会报错，
+ * 而是 finish_reason=length 且 content 为 null，于是静默掉进规则回退——
+ * 这里按「推理上限 + 输出 + 余量」给足，超时也相应放宽。
+ */
+const PICK_MAX_TOKENS = 2000;
+const PICK_TIMEOUT_MS = 45_000;
+
 /** 从模型回复里抠出第一个 JSON 对象（容许 ```json 围栏与前后废话）。 */
 function extractJson(text) {
   if (typeof text !== 'string') return null;
@@ -24,9 +33,20 @@ function extractJson(text) {
 /**
  * 今日穿搭：先用衣橱搜索把候选缩小，再让对话模型在候选里挑一套；
  * 模型不可用或返回不合法时退回规则挑选，保证永远能给出一套可执行建议。
+ *
+ * 回退是设计内的兜底，但静默回退会掩盖上游问题（模型名不在网关目录、预算被推理
+ * 吃光、限流）。所以每次回退都留一行原因，logger 可注入以便测试。
  */
-export function createStylist({ env = process.env, fetchImpl = fetch, wardrobe } = {}) {
+export function createStylist({ env = process.env, fetchImpl = fetch, wardrobe, logger = console } = {}) {
   if (!wardrobe) throw new Error('createStylist 需要一个 wardrobe');
+
+  function noteFallback(reason) {
+    try {
+      logger.warn?.(`[stylist] 回退到规则挑选：${reason}`);
+    } catch {
+      // 日志失败不能影响给用户出建议。
+    }
+  }
 
   function bucket(candidates) {
     const bySlot = new Map(SLOT_KEYS.map((slot) => [slot, []]));
@@ -101,7 +121,7 @@ export function createStylist({ env = process.env, fetchImpl = fetch, wardrobe }
     ].join('\n');
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error('timeout')), 25_000);
+    const timer = setTimeout(() => controller.abort(new Error('timeout')), PICK_TIMEOUT_MS);
     try {
       const key = apiKey(env, 'CHAT');
       const response = await fetchImpl(`${apiBaseUrl(env, 'CHAT')}/chat/completions`, {
@@ -113,15 +133,30 @@ export function createStylist({ env = process.env, fetchImpl = fetch, wardrobe }
         },
         body: JSON.stringify({
           model: env.STYLIST_MODEL || env.CAPTION_MODEL || 'codex/gpt-6.1-sol',
-          max_tokens: 500,
+          max_tokens: PICK_MAX_TOKENS,
           messages: [{ role: 'user', content: prompt }],
         }),
       });
-      if (!response.ok) return null;
+      if (!response.ok) {
+        noteFallback(`上游对话接口返回 ${response.status}`);
+        return null;
+      }
       const data = await response.json();
-      const text = data?.choices?.[0]?.message?.content ?? '';
+      const choice = data?.choices?.[0];
+      const text = choice?.message?.content ?? '';
+      // 推理模型把预算花在 reasoning 上时，content 为 null 且 finish_reason=length；
+      // 这种情况必须报出来，否则看起来只是「模型没挑好」。
+      if (!text && choice?.finish_reason === 'length') {
+        const used = data?.usage?.completion_tokens;
+        const reasoning = data?.usage?.completion_tokens_details?.reasoning_tokens;
+        noteFallback(`输出被 token 上限截断（max_tokens=${PICK_MAX_TOKENS}，completion=${used}，reasoning=${reasoning}）`);
+        return null;
+      }
       const parsed = extractJson(text);
-      if (!parsed || typeof parsed.picks !== 'object' || !parsed.picks) return null;
+      if (!parsed || typeof parsed.picks !== 'object' || !parsed.picks) {
+        noteFallback('模型回复里没有可解析的 picks JSON');
+        return null;
+      }
 
       const slots = {};
       let dressId = null;
@@ -146,12 +181,19 @@ export function createStylist({ env = process.env, fetchImpl = fetch, wardrobe }
         if (slot === 'dress') dressId = id;
         if (slot === 'top' || slot === 'bottom') hasTopBottom = true;
       }
-      if (dressId && hasTopBottom) return null; // 互斥冲突，交给规则回退
-      if (!slots.dress && !(slots.top && slots.bottom)) return null;
+      if (dressId && hasTopBottom) {
+        noteFallback('模型同时给了连衣裙和上/下装（互斥冲突）');
+        return null;
+      }
+      if (!slots.dress && !(slots.top && slots.bottom)) {
+        noteFallback('模型挑出的组合凑不成一套（既无连衣裙，也缺上衣或下装）');
+        return null;
+      }
       const missing = [];
       if (!slots.shoes) missing.push('shoes');
       return { slots, reason: sanitizeText(String(parsed.reason || ''), 120) || '按你的需求挑了一套', missing };
-    } catch {
+    } catch (error) {
+      noteFallback(error?.name === 'AbortError' ? `上游对话接口超时（${PICK_TIMEOUT_MS}ms）` : `调用上游失败：${error?.message ?? '未知错误'}`);
       return null;
     } finally {
       clearTimeout(timer);

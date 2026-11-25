@@ -124,3 +124,48 @@ test('衣橱为空时返回空建议而不是抛错', async () => {
   assert.deepEqual(res.slots, {});
   assert.ok(res.missing.length > 0);
 });
+
+test('推理模型把预算花光导致 content 为 null 时，给出可诊断的回退原因', async () => {
+  // 真实故障形态：finish_reason=length、message.content=null、reasoning 占满 completion。
+  const truncated = {
+    choices: [{ finish_reason: 'length', message: { content: null, role: 'assistant' } }],
+    usage: { completion_tokens: 500, completion_tokens_details: { reasoning_tokens: 500 } },
+  };
+  const warnings = [];
+  const stylist = createStylist({
+    wardrobe: wardrobeReturning(CATALOG),
+    fetchImpl: async () => ({ ok: true, json: async () => truncated }),
+    logger: { warn: (message) => warnings.push(message) },
+  });
+  const res = await stylist.suggest('明天面试');
+  assert.ok(Object.keys(res.slots).length > 0, '仍要给出一套可执行建议');
+  assert.equal(warnings.length, 1, '回退必须留一行原因');
+  assert.match(warnings[0], /token 上限截断/);
+  assert.match(warnings[0], /reasoning=500/);
+});
+
+test('挑选请求给推理模型留足输出预算', async () => {
+  let sent = null;
+  const stylist = createStylist({
+    wardrobe: wardrobeReturning(CATALOG),
+    fetchImpl: async (_url, options) => {
+      sent = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ choices: [{ message: { content: '{"picks":{"top":"t1","bottom":"b1"},"reason":"通勤"}' } }] }) };
+    },
+  });
+  await stylist.suggest('明天面试');
+  // 输出只需约 160 token，但推理会浮动到 940 左右；预算必须高于推理上限。
+  assert.ok(sent.max_tokens >= 1500, `max_tokens 应留出推理余量，实际 ${sent.max_tokens}`);
+});
+
+test('上游报错时回退原因里带状态码', async () => {
+  const warnings = [];
+  const stylist = createStylist({
+    wardrobe: wardrobeReturning(CATALOG),
+    fetchImpl: async () => ({ ok: false, status: 429 }),
+    logger: { warn: (message) => warnings.push(message) },
+  });
+  await stylist.suggest('明天面试');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /429/);
+});
