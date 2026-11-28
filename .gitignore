@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 node_modules/
+/public/dist/
 artifacts/
 data/state.json
 data/state.json.tmp
@@ -10,7 +11,14 @@ data/cookies.json
 data/wardrobe.json
 data/wardrobe/
 data/browser-profile/
+data/posewear-archive/
 
 # 实验证据与抓取内容留在本地：evidence/ 含真人照片，web-articles/ 是第三方内容。
 evidence/
 web-articles/
+
+# 本地设计校验产物与截图：不入库
+.taste-skill/live-shots/
+.taste-skill/live-shots-v2/
+.taste-skill/ref-browse/
+test/__pycache__/

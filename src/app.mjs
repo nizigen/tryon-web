@@ -4,20 +4,17 @@ import { readFile, realpath } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { findOutfitConflict, MAX_ACCESSORIES } from '../public/lib/outfit-rules.js';
 import { loadCookies } from './cookies.mjs';
 import { HttpError } from './errors.mjs';
-import { generateImage, deadline } from './imageapi.mjs';
-import { listGenerationModels as listModels, preflightGeneration, supportsPhotographyMode } from './generation.mjs';
-import { checkWorkflow } from './comfyui.mjs';
-import { checkIdm, IDM_ID } from './idm.mjs';
-import { buildOutfitPrompt, buildTryonPrompt, CATEGORIES, DEFAULT_POSE_PRESET, DEFAULT_STUDIO_PRESET, FITS, GARMENT_TYPES, garmentTypeLabel, effectiveLayer, isCategory, isGarmentType, isSlot, normalizeLayer, normalizePosePreset, normalizeStudioPreset, orderPieces, POSE_PRESETS, sanitizeText, SLOTS, slotLabel, STUDIO_PRESETS } from './prompt.mjs';
+import { deadline, generateImage, isRetiredImageModel, listModels } from './imageapi.mjs';
+import { studioFaceReference } from './model-identity.mjs';
+import { buildOutfitPrompt, buildTryonPrompt, CATEGORIES, DEFAULT_POSE_PRESET, DEFAULT_STUDIO_PRESET, FITS, GARMENT_TYPES, garmentTypeLabel, isCategory, isGarmentType, isSlot, normalizeLayer, normalizePosePreset, normalizeStudioPreset, orderPieces, POSE_PRESETS, sanitizeText, SLOTS, slotLabel, STUDIO_PRESETS } from './prompt.mjs';
 import { priceCatalog, resolveTier } from './pricing.mjs';
 import { assertString, decodeImage, MAX_BODY_BYTES, MAX_IMAGE_BYTES, MAX_PROMPT_CHARS, sniff } from './validate.mjs';
 
 /** 单次搭配件数上限（不含人物照），见 OUTFIT_MODEL.md 第 2 节。 */
 const MAX_PIECES = 5;
-const MAX_ACCESSORY = 2;
-/** OpenAI 兼容图片编辑接口当前最多接收 16 张参考图；人物与姿势图各占一张。 */
 const MAX_REFERENCE_IMAGES = 16;
 
 function isDemoMode(env) {
@@ -35,6 +32,7 @@ const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.glb': 'model/gltf-binary',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
@@ -265,10 +263,16 @@ async function handleSettingsRead(context) {
   });
 }
 
+function readModelId(value) {
+  const model = assertString(value, 'model', { max: 120 });
+  if (isRetiredImageModel(model)) throw new HttpError(400, 'MODEL_UNAVAILABLE', '所选模型已不可用，请重新加载配置', 'model');
+  return model;
+}
+
 async function handleSettingsUpdate(context) {
   const { response, request, store, clock, env, fetchImpl } = context;
   const input = await readJsonBody(request, clock.signal);
-  const model = assertString(input?.model, 'model', { max: 120 });
+  const model = readModelId(input?.model);
   // 只允许选当前网关真实列出来的模型：写进一个不存在的名字，下一次下单才会 400，太晚了。
   const models = await listModels(env, fetchImpl, clock.signal);
   if (!models.includes(model)) {
@@ -302,14 +306,14 @@ async function handleSessionCreate(context) {
   const input = await readJsonBody(context.request, clock.signal);
   const deviceId = assertString(input?.deviceId, 'deviceId', { max: 128 });
   const session = await store.getOrCreateSession(deviceId);
-  sendJson(response, 200, { sessionId: session.id, balanceCents: session.balanceCents, packs: priceCatalog([]).packs });
+  sendJson(response, 200, { sessionId: session.id, balanceCents: session.balanceCents, packs: [] });
 }
 
 async function handleSessionRead(context) {
   const { response, store, sessionId } = context;
   const session = store.getSession(sessionId);
   if (!session) throw new HttpError(404, 'SESSION_NOT_FOUND', '会话不存在或已失效');
-  sendJson(response, 200, { sessionId: session.id, balanceCents: session.balanceCents, packs: priceCatalog([]).packs });
+  sendJson(response, 200, { sessionId: session.id, balanceCents: session.balanceCents, packs: [] });
 }
 
 function resolveOrderInput(context, input) {
@@ -349,7 +353,7 @@ function parseExtra(value) {
   return extra.trim();
 }
 
-/** 影棚参数在取图和扣费前定型；普通试穿未传摄影模式时保持旧行为。 */
+/** 影棚参数在取图前定型；普通试穿未传摄影模式时保持旧行为。 */
 function parsePhotography(input) {
   const mode = input?.photographyMode ?? 'preserve';
   if (!['preserve', 'studio'].includes(mode)) {
@@ -406,7 +410,7 @@ async function legacyGarment(context, { product }, input) {
 
 /**
  * 多件穿搭：校验 slot 白名单、格子×层级叠穿、dress 与 top/bottom 互斥、总件数，
- * 并按 source.kind 取每件的图。所有图必须在扣费前取到。
+ * 并按 source.kind 取每件的图。所有图必须在建单前取到。
  */
 async function resolvePieces(context, rawPieces) {
   const { store, sources, wardrobe, clock } = context;
@@ -468,24 +472,15 @@ async function resolvePieces(context, rawPieces) {
     }
     resolved.push({ slot, layer, garmentType: garmentType || slotLabel(slot), name, dataUrl, product });
   }
-  // 叠穿语义：同一格子允许跨穿着层级多件（如上衣的内层+中层），同格同层仍只能一件；
-  // 配饰沿用本身的 2 件上限，不参与层级去重。
-  const seen = new Set();
-  for (const piece of resolved) {
-    if (piece.slot === 'accessory') continue;
-    const key = `${piece.slot}:${effectiveLayer(piece)}`;
-    if (seen.has(key)) {
-      throw new HttpError(400, 'INVALID_REQUEST', `同一格子的同一穿着层级最多一件（${slotLabel(piece.slot)}·${piece.layer}）`, 'pieces');
-    }
-    seen.add(key);
+  const conflict = findOutfitConflict(resolved);
+  if (conflict?.kind === 'layer') {
+    const piece = resolved[conflict.secondIndex];
+    throw new HttpError(400, 'INVALID_REQUEST', `同一格子的同一穿着层级最多一件（${slotLabel(piece.slot)}·${piece.layer}）`, 'pieces');
   }
-  const accessoryCount = resolved.filter((piece) => piece.slot === 'accessory').length;
-  if (accessoryCount > MAX_ACCESSORY) {
-    throw new HttpError(400, 'INVALID_REQUEST', '配饰最多 2 件', 'pieces');
+  if (conflict?.kind === 'accessory-limit') {
+    throw new HttpError(400, 'INVALID_REQUEST', `配饰最多 ${MAX_ACCESSORIES} 件`, 'pieces');
   }
-  const hasDress = resolved.some((piece) => piece.slot === 'dress');
-  const hasTopOrBottom = resolved.some((piece) => piece.slot === 'top' || piece.slot === 'bottom');
-  if (hasDress && hasTopOrBottom) {
+  if (conflict?.kind === 'dress') {
     throw new HttpError(400, 'INVALID_REQUEST', '连衣裙不能与上衣或下装同时选择', 'pieces');
   }
   return orderPieces(resolved);
@@ -497,7 +492,8 @@ async function handleOrderCreate(context) {
   const sessionId = assertString(input?.sessionId, 'sessionId', { max: 64 });
   const session = store.getSession(sessionId);
   if (!session) throw new HttpError(404, 'SESSION_NOT_FOUND', '会话不存在或已失效');
-  const demoMode = isDemoMode(env);
+  const requested = input?.model;
+  const requestedModel = requested === undefined || requested === null || requested === '' ? null : readModelId(requested);
   const legacy = !Array.isArray(input?.pieces);
   const photography = parsePhotography(input);
 
@@ -513,23 +509,17 @@ async function handleOrderCreate(context) {
 
   const models = await listModels(env, fetchImpl, clock.signal);
   const settings = store.getSettings();
-  const requested = input?.model;
   // 存下来的模型可能已经不在当前目录里（换了服务地址或模型下线）。这时退回默认模型，
   // 而不是让每一次下单都报 MODEL_UNAVAILABLE——用户在下单页无从修复。
   const saved = settings.model && models.includes(settings.model) ? settings.model : null;
-  const model = requested === undefined || requested === null || requested === ''
-    ? (saved ?? priceCatalog(models).defaultModel ?? null)
-    : assertString(requested, 'model', { max: 120 });
+  const model = requestedModel ?? saved ?? priceCatalog(models).defaultModel;
   if (!model || !models.includes(model)) {
     throw new HttpError(400, 'MODEL_UNAVAILABLE', '所选模型已不可用，请重新加载配置', 'model');
   }
-  if (!supportsPhotographyMode(model, photography.photographyMode)) {
-    throw new HttpError(400, 'MODEL_MODE_UNSUPPORTED', '当前模型不执行无影棚背景和姿势重建，请切换到普通试穿或支持多参考图的图片模型', 'photographyMode');
-  }
   const tier = resolveTier(model, input?.tier);
-  decodeImage(input?.person, 'person');
+  const personImage = decodeImage(input?.person, 'person');
+  const face = await studioFaceReference(personImage, input?.personSource, photography.photographyMode);
 
-  // 取每件的图：所有图都在扣费前取到。
   let pieces;
   let product = null;
   let category = null;
@@ -550,14 +540,12 @@ async function handleOrderCreate(context) {
     pieces = await resolvePieces(context, input.pieces);
   }
 
-  await preflightGeneration(model, pieces, env, fetchImpl, clock.signal);
-  const priceCents = demoMode ? 0 : tier.priceCents;
-  const costCents = demoMode ? 0 : tier.costCents;
   const prompt = buildOutfitPrompt({
     pieces,
     fit: input?.fit ?? 'regular',
     extra,
     photographyMode: photography.photographyMode,
+    posewearBody: Boolean(face),
     studioPreset: photography.studioPreset ?? DEFAULT_STUDIO_PRESET,
     posePreset: photography.posePreset ?? DEFAULT_POSE_PRESET,
   });
@@ -568,20 +556,15 @@ async function handleOrderCreate(context) {
   const poseReference = photography.photographyMode === 'studio'
     ? await poseReferenceDataUrl(photography.posePreset)
     : null;
-  if (poseReference) preflightGenerationReferenceCount(model, pieces.length + 2);
+  const referenceImages = [input.person, ...(face ? [face] : []), ...pieces.map((piece) => piece.dataUrl), ...(poseReference ? [poseReference] : [])];
+  preflightGenerationReferenceCount(model, referenceImages.length);
   // 上游按 size 约束输出画幅；无影棚提示词与产品契约固定为 2:3，不能只靠模型自行裁切。
   const outputSize = photography.photographyMode === 'studio' ? '1024x1536' : tier.size;
 
-  // 先占位再扣费：占位失败不扣钱；扣费后任何异常都全额退回。演示模式不校验余额、不扣费。
   tryon.reserve(sessionId);
-  if (!demoMode && session.balanceCents < tier.priceCents) {
-    tryon.release(sessionId);
-    throw new HttpError(402, 'INSUFFICIENT_BALANCE', `余额不足，还差 ${tier.priceCents - session.balanceCents} 分`, 'balance');
-  }
   let order = null;
   let job = null;
   try {
-    if (priceCents > 0) await store.addBalance(sessionId, -priceCents);
     order = await store.createOrder({
       sessionId,
       productId: product?.id ?? null,
@@ -596,8 +579,6 @@ async function handleOrderCreate(context) {
       pieces: pieces.map(({ slot, layer = 'auto', garmentType, name }) => ({ slot, layer, garmentType, name })),
       ...photography,
       prompt,
-      priceCents,
-      costCents,
     });
     // 人像与各件服装图只留在任务内存里，不写入订单记录，避免落盘。
     // start=false：先把 jobId 落库再启动，否则「订单已建但没记 jobId」的窗口里任务已在跑。
@@ -607,8 +588,7 @@ async function handleOrderCreate(context) {
       payload: {
         model,
         prompt,
-        referenceImages: [input.person, ...pieces.map((piece) => piece.dataUrl), ...(poseReference ? [poseReference] : [])],
-        pieces: pieces.map(({ slot, layer = 'auto', garmentType, name }) => ({ slot, layer, garmentType, name })),
+        referenceImages,
         quality: tier.quality,
         size: outputSize,
       },
@@ -617,28 +597,18 @@ async function handleOrderCreate(context) {
     await store.updateOrder(order.id, { jobId: job.id });
     tryon.start(job.id);
     sendJson(response, 201, {
-      order: { id: order.id, status: order.status, slots, priceCents },
+      order: { id: order.id, status: order.status, slots, priceCents: order.priceCents },
       orderId: order.id,
       jobId: job.id,
-      priceCents,
+      priceCents: order.priceCents,
       balanceCents: store.getSession(sessionId).balanceCents,
     });
   } catch (error) {
-    // 回滚要成对：撤任务 → 把订单置为失败 → 再退款。
-    // 只退款不撤单会让重启对账再退一次，只退款不撤任务会出现「钱退了图还出了」。
     tryon.release(sessionId);
     if (job) tryon.cancel(job.id, 'ORDER_ABORTED');
     if (order) {
-      await store
-        .updateOrder(order.id, {
-          status: 'failed',
-          finishedAt: new Date().toISOString(),
-          errorCode: 'ORDER_ABORTED',
-          errorMessage: '下单过程中断，费用已退回余额',
-        })
-        .catch(() => {});
+      await store.failOrder(order.id, { errorCode: 'ORDER_ABORTED', errorMessage: '试穿任务未能启动' });
     }
-    if (priceCents > 0) await store.addBalance(sessionId, priceCents);
     throw error;
   }
 }
@@ -699,43 +669,15 @@ async function handleJob(context) {
   });
 }
 
-async function handlePaymentCreate(context) {
-  const { response, request, store, clock, allowSimulation, demoMode } = context;
-  if (demoMode) throw new HttpError(403, 'PAYMENT_DISABLED', '演示模式下充值通道已关闭');
-  if (!allowSimulation) throw new HttpError(403, 'PAYMENT_DISABLED', '真实支付未接入，充值通道已关闭');
-  const input = await readJsonBody(request, clock.signal);
-  const sessionId = assertString(input?.sessionId, 'sessionId', { max: 64 });
-  const payment = await store.createPayment({ sessionId, packId: input?.packId });
-  sendJson(response, 201, {
-    paymentId: payment.id,
-    amountCents: payment.amountCents,
-    status: payment.status,
-    channels: [],
-    notice: '真实支付通道未接入，此处为本地模拟充值',
-  });
-}
-
-async function handlePaymentConfirm(context) {
-  const { response, request, store, clock, paymentId, allowSimulation, demoMode } = context;
-  if (demoMode) throw new HttpError(403, 'PAYMENT_DISABLED', '演示模式下充值通道已关闭');
-  if (!allowSimulation) throw new HttpError(403, 'PAYMENT_DISABLED', '真实支付未接入，充值通道已关闭');
-  const input = await readJsonBody(request, clock.signal);
-  const sessionId = assertString(input?.sessionId, 'sessionId', { max: 64 });
-  const payment = await store.payPayment(paymentId, sessionId);
-  sendJson(response, 200, {
-    paymentId: payment.id,
-    status: payment.status,
-    balanceCents: store.getSession(sessionId).balanceCents,
-  });
+function rejectPayment() {
+  throw new HttpError(403, 'PAYMENT_DISABLED', '测试期间试穿免费，充值通道已关闭');
 }
 
 async function handleTryon(context) {
-  const { response, request, env, fetchImpl, clock, allowSimulation } = context;
-  // 直连接口绕过下单、占位与扣费：演示模式下它会让上游调用脱离演示流程，必须关闭。
-  // （演示模式的正常出图走 /api/orders，那条链路照常生成、只是不计费。）
-  if (isDemoMode(env) || !allowSimulation) throw new HttpError(403, 'RAW_TRYON_DISABLED', '直连生成接口已关闭，请使用下单流程');
+  const { response, request, env, fetchImpl, clock, allowRawTryon } = context;
+  if (isDemoMode(env) || !allowRawTryon) throw new HttpError(403, 'RAW_TRYON_DISABLED', '直连生成接口已关闭，请使用下单流程');
   const input = await readJsonBody(request, clock.signal);
-  const model = assertString(input?.model, 'model', { max: 120 });
+  const model = readModelId(input?.model);
   const category = input?.category;
   if (!isCategory(category)) throw new HttpError(400, 'INVALID_REQUEST', '请选择上衣、下装或连衣裙', 'category');
   const garmentType = input?.garmentType ?? GARMENT_TYPES[category][0].id;
@@ -910,17 +852,7 @@ async function handleLoginCancel(context) {
   response.end();
 }
 
-async function handleWorkflowStatus({ response, env, fetchImpl, clock }) {
-  sendJson(response, 200, await checkWorkflow(env, fetchImpl, clock.signal));
-}
-
-async function handleIdmStatus({ response, env, fetchImpl, clock }) {
-  sendJson(response, 200, await checkIdm(env, fetchImpl, clock.signal));
-}
-
 const ROUTES = [
-  { method: 'GET', pattern: /^\/api\/workflows\/idm\/status$/, handler: handleIdmStatus },
-  { method: 'GET', pattern: /^\/api\/workflows\/status$/, handler: handleWorkflowStatus },
   { method: 'GET', pattern: /^\/api\/config$/, handler: handleConfig },
   { method: 'GET', pattern: /^\/api\/settings$/, handler: handleSettingsRead },
   { method: 'PATCH', pattern: /^\/api\/settings$/, handler: handleSettingsUpdate },
@@ -932,8 +864,7 @@ const ROUTES = [
   { method: 'GET', pattern: /^\/api\/orders$/, handler: handleOrderList },
   { method: 'GET', pattern: /^\/api\/orders\/(?<orderId>[^/]+)$/, handler: handleOrderRead },
   { method: 'GET', pattern: /^\/api\/jobs\/(?<jobId>[^/]+)$/, handler: handleJob },
-  { method: 'POST', pattern: /^\/api\/payments$/, handler: handlePaymentCreate },
-  { method: 'POST', pattern: /^\/api\/payments\/(?<paymentId>[^/]+)\/confirm$/, handler: handlePaymentConfirm },
+  { method: 'POST', pattern: /^\/api\/payments(?:\/[^/]+\/confirm)?$/, handler: rejectPayment },
   { method: 'POST', pattern: /^\/api\/sources$/, handler: handleSourceCreate },
   { method: 'GET', pattern: /^\/api\/sources\/(?<sourceId>[^/]+)\/(?<index>\d+)$/, handler: handleSourceImage },
   { method: 'GET', pattern: /^\/api\/wardrobe$/, handler: handleWardrobeList },
@@ -963,8 +894,7 @@ function matchRoute(method, pathname) {
 export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, sources, wardrobe, login, stylist, timeoutMs = 120_000, resultsDir = RESULTS_DIR, dataDir }) {
   // 数据目录与 server.mjs 传给 store/wardrobe/login 的是同一个：cookie 文件的读写必须落在同一处。
   const resolvedDataDir = dataDir ?? resolve(resultsDir, '..');
-  // 本机默认开放模拟充值与直连生成；一旦配置对外来源（部署形态）默认关闭，必须显式开启。
-  const allowSimulation = env.ENABLE_SIMULATED_PAYMENTS === '1' || !env.PUBLIC_ORIGIN;
+  const allowRawTryon = !env.PUBLIC_ORIGIN || env.ENABLE_RAW_TRYON === '1' || env.ENABLE_SIMULATED_PAYMENTS === '1';
   const app = createServer(async (request, response) => {
     let clock;
     let disconnect;
@@ -975,8 +905,11 @@ export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, 
       if (!request.url.startsWith('/') || pathname !== url.pathname) throw new HttpError(404, 'NOT_FOUND', '页面不存在');
       const route = matchRoute(request.method, pathname);
       if (!route) {
-        if (pathname.startsWith('/api/')) throw new HttpError(405, 'METHOD_NOT_ALLOWED', '此接口不支持该请求方法');
-        return await serveStatic(request, response, pathname);
+        if (pathname !== '/api' && !pathname.startsWith('/api/')) return await serveStatic(request, response, pathname);
+        const allowed = ROUTES.filter(({ pattern }) => pattern.test(pathname)).map(({ method }) => method);
+        if (!allowed.length) throw new HttpError(404, 'NOT_FOUND', '接口不存在');
+        response.setHeader('Allow', allowed.join(', '));
+        throw new HttpError(405, 'METHOD_NOT_ALLOWED', '此接口不支持该请求方法');
       }
       const controller = new AbortController();
       disconnect = () => {
@@ -998,7 +931,7 @@ export function createApp({ env = process.env, fetchImpl = fetch, store, tryon, 
         stylist,
         clock,
         timeoutMs,
-        allowSimulation,
+        allowRawTryon,
         demoMode: isDemoMode(env),
         resultsDir,
         dataDir: resolvedDataDir,

@@ -6,6 +6,7 @@ import { generateImage, listModels } from '../src/imageapi.mjs';
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const PNG_BYTES = Buffer.from(PNG, 'base64');
 const BASE = 'http://127.0.0.1:3425/v1';
+const RETIRED_MODELS = ['comfyui/foxbaze-tryon', 'idm/idm-vton'];
 const env = { IMAGE_API_BASE_URL: BASE, IMAGE_MODELS: 'fake/model' };
 
 function imageResponse(buffer = PNG_BYTES, type = 'image/png') {
@@ -58,4 +59,28 @@ test('模型目录不可达时退回 IMAGE_MODEL，不让整个功能失效', as
   };
   const models = await listModels({ IMAGE_API_BASE_URL: BASE, IMAGE_MODEL: 'mine/model' }, fetchImpl);
   assert.deepEqual(models, ['mine/model']);
+});
+
+test('显式和网关目录排除两个停用试穿模型，保留其它提供方图片模型', async (context) => {
+  const available = 'vendor/Qwen-Image';
+  const models = [...RETIRED_MODELS, ` ${RETIRED_MODELS[0].toUpperCase()} `, available];
+  const directory = async () => Response.json({ data: models.map((id) => ({ id, output_modalities: ['image'] })) });
+  const offline = context.mock.fn(async () => { throw new Error('offline'); });
+  assert.deepEqual(await listModels({ IMAGE_MODELS: models.join(',') }, offline), [available]);
+  assert.deepEqual(await listModels({ IMAGE_MODELS: RETIRED_MODELS.join(',') }, offline), []);
+  assert.equal(offline.mock.callCount(), 0);
+  for (const model of RETIRED_MODELS) {
+    assert.deepEqual(await listModels({ IMAGE_MODEL: model }, directory), [available]);
+    assert.deepEqual(await listModels({ IMAGE_MODEL: model }, offline), ['codex/gpt-image-2.5']);
+  }
+});
+
+test('直接调用生成器使用停用模型时不查询目录，也不调用生成服务', async (context) => {
+  const upstream = context.mock.fn(async () => Response.json({ data: [] }));
+  for (const model of RETIRED_MODELS) {
+    await assert.rejects(generateImage({ model, prompt: 'test' }, { IMAGE_API_BASE_URL: BASE }, upstream), {
+      status: 400, code: 'MODEL_UNAVAILABLE', field: 'model',
+    });
+  }
+  assert.equal(upstream.mock.callCount(), 0);
 });

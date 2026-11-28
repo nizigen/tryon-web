@@ -1,46 +1,42 @@
 # TECH_STACK — OpenAI 兼容图片服务 + 零依赖 Node 后端
 
+W9 前端使用 React 和 React DOM 19.2.7，复用本机已有的 esbuild 0.28.2 编译 JSX，产物由 Node 同源提供。服务端保持原生 HTTP 和 multipart 图片编辑，身份特写与应用一起交付。下方按 W 编号保留各阶段的历史选型。
+
+W10 沿用身份资产登记表 `public/lib/model-assets.js` 及服务端 `src/model-identity.mjs`。内置棚拍第二张为 `/model/posewear-01/face-studio-makeup.png`，按 `image/png` 送入 multipart；登记实际 SHA-256 并用于静态 URL 的版本标识。原始 v3r3 JPEG 独立留档。
+
 ## W6：无影棚成片
 
 沿用 Node 原生 HTTP 服务、OpenAI 兼容图片编辑接口和原生 HTML/CSS/ESM 前端，不新增依赖、模型 SDK、数据库或批量任务引擎。背景与姿势目录由 `src/prompt.mjs` 单一维护，经 `/api/config` 下发；三姿势由现有订单 API 顺序创建三个任务，继续复用现有并发限制、扣费、退款、结果票据与 24 小时 TTL。
 
-## W5：已实测 IDM-VTON 栈
-
-本地仍为零依赖 Node v24/native fetch，不引入 SDK；以 `IDM_BASE_URL`（仅服务端）连接自建 `GET /health`、`POST /tryon` HTTP 服务。协议图片是纯 base64（不是 data URL），响应为内联 PNG base64。总时限 `IDM_TIMEOUT_MS` 默认 600000ms，限制 1000..3600000ms；其它模型时限不变。部署服务仅监听远端 loopback:8190，通过 SSH 隧道接本地 loopback:8190。
-
-远端 Python 3.12.3 独立 venv、复用已装 torch 2.8.0+cu128 / torchvision 0.23.0+cu128；diffusers **0.25.0**（0.27.2 与官方自定义 UNet 的 PositionNet 不兼容）、transformers 4.40.2、huggingface_hub 0.23.5、accelerate 0.30.0、numpy 1.26.4、onnxruntime 1.19.2、opencv-python-headless 4.10.0.84、scikit-image 0.24.0。官方源码固定 `06ad89ba2f78d77a5ba21d7f7fd392254971fda2`；十个权重逐件核对官方固定修订 SHA 后使用。官方自定义 SDXL pipeline、独立 try-on / garment UNet、Parsing/OpenPose/DensePose 实测成功。应用不再依赖已删除的 Qwen 权重来生成 IDM 结果。
-
 ## 运行时与依赖
 | 层 | 版本/契约 | 说明 |
 | --- | --- | --- |
-| Node.js | v24.22.3（本机实测） | node:http、fetch、AbortController、node:test、fs/promises；**不新增第三方依赖** |
-| 前端 | 原生 HTML/CSS/ESM 浏览器 API | 无框架、无构建器、无 CDN；ESM 分模块 |
+| Node.js | v24.22.2（W11 本机运行与测试） | node:http、fetch、AbortController、node:test、fs/promises；**不新增第三方依赖** |
+| 前端 | React / React DOM 19.2.7；esbuild 0.28.2（仅开发） | `frontend/` JSX、现有 CSS、同源 JS 产物，保留 hash 导航 |
 | 图片服务 | OpenAI 兼容 HTTP：`POST /v1/images/generations`、`POST /v1/images/edits`、`GET /v1/models` | 地址 `IMAGE_API_BASE_URL`（默认 `http://127.0.0.1:3425/v1`），密钥 `IMAGE_API_KEY` 走 `Authorization: Bearer` |
 | 生成 | JSON（无参考图）或 multipart（有参考图） | 有参考图时字段 `model/prompt/n/response_format/size/quality` + `image[]`；回包取 `data[0].b64_json` 与 `mime_type` |
 | 模型目录 | `GET /v1/models` 里 `modalities.output` 含 `image` 的条目，再补上 `IMAGE_MODEL` | `IMAGE_MODELS` 显式给出时不再请求目录 |
 | 测试 | node --test | API/领域测试 + `test/frontend.test.mjs`；真实临时后端/JSON 状态，模拟外部上游 |
 | 存储 | 仓库内 `data/*.json` 原子写入 | 商品目录、会话余额、订单；不存人像照片 |
-| 页面驱动 | OpenCLI 2.0.3（首选实时驱动） | 当前容器桥接未连接，单独列明，不假称 OpenCLI 验收通过 |
+| 页面驱动 | OpenCLI 2.0.3（首选实时驱动） | W11 桥接已连接，页面导航和截图可用，后台窗口的原生点击未派发 |
 | 既有浏览器回归方法 | 已安装 Chromium 133.0.6943.141 + Node 内建 WebSocket/CDP | `test/helpers/browser.mjs` 复用本项目既有 CDP 方法，原生键盘/鼠标；无新增依赖、无 Playwright；未找到已装浏览器则显式 skip，可设 TRYON_TEST_CHROME |
 | 商品取图 | 四家全部服务端直连：淘宝 = 登录 cookie + mtop；抖音 = 分享链接数据 + ttwid；京东 = 手机版详情页 `window._itemOnly`（免登录）；拼多多 = `goods1.html` 的 `window.rawData`（需 pdd cookie）。OpenCLI 仅在直连失败时兜底 | 不开浏览器、不依赖本机 OpenCLI；兜底才用 `execFile` 调 `node <opencli>/dist/src/main.js` |
 | 扫码登录 | 受控 Chrome（独立 `--user-data-dir`）+ CDP | `Target.createTarget` → `attachToTarget(flatten)` → `Network.getAllCookies`，能拿 HttpOnly；OpenCLI 的 `browser eval` 拿不到、`chrome call` 明确拒绝该方法 |
 | 视觉 / 对话 | OpenAI 兼容 `POST /v1/chat/completions` | 默认复用图片服务的地址与密钥，可用 `CHAT_API_BASE_URL` / `CHAT_API_KEY` 单独指向；衣橱描述 `CAPTION_MODEL`、今日选搭 `STYLIST_MODEL`，默认 `codex/gpt-6.1-sol`；失败降级不阻断主流程 |
 | 衣橱存储 | `data/wardrobe.json` + `data/wardrobe/<uuid>.<ext>` | 原子写、串行队列；检索用内置 BM25（中文按字 + 二元组），不引入向量库 |
 
-## ComfyUI 增量（2026-11-24）
-
-应用继续零依赖 Node v24.17.0（当前 Windows 实测）；ComfyUI API 为 GET /object_info、POST /upload/image、POST /prompt、GET /history/:id、GET /view。服务端环境 COMFYUI_BASE_URL / COMFYUI_API_KEY 提供连接；不从浏览器接收地址/凭据。工作流使用核心 ImageStitch / ImageScale 和原版 TextEncodeQwenImageEdit；具体版本、权重、许可证和未知显存记录在 docs/COMFYUI.md。GGUF 是可选实验部署，不能证明4090适配。应用不安装外部节点或下载权重。
-
 ## 模型目录（运行时动态发现）
 `GET /v1/models` → 取 `modalities.output` 含 `image` 的 `id`，再并入 `IMAGE_MODEL`（默认 `codex/gpt-image-2.5`）。
 **不能只按目录过滤**：本机实测 93 个模型里只有 `minimax-code/MiniMax-Image` 标了图片输出，默认模型 `codex/gpt-image-2.5` 根本不在目录里（指定它照样能出图），只按目录过滤会让默认模型凭空消失。用 `IMAGE_MODELS` 可以完全跳过目录请求。
 目录可见 ≠ 健康；不发自动付费探测。
 
+普通试穿和无影棚均通过 OpenAI 兼容图片 API 运行。显式白名单、动态目录和默认选项统一排除已停用的专属试穿模型；白名单只含停用模型时返回空目录。原先保存的模型已停用时，设置页与新订单使用当前有效默认值。历史订单保留当时的模型名称和结果。
+
 ## 生成参数约定
 - `quality`：`medium` 为默认档（成本与质量平衡），`high` 为高质量档；`size` 默认 `1024x1536`（竖版全身），人物照比例不同时按需调整。
-- 参考图固定顺序：人物在前、各件服装按 `SLOT_ORDER` 在后；服务端按这个顺序拼 `image[]`。
+- `image[]` 首张为人物全身，内置棚拍再附同人定妆照。服装按有效穿着层和同层 `SLOT_ORDER` 排序；棚拍以 PoseWear 骨架收尾。
 
-## 成本基线（2025-11 公开价，供定价参考，非本项目账单）
+## 历史成本估算（2025-11，测试期不用于订单定价）
 | 模型 | 公开价 | 折算单次(1K) |
 | --- | --- | --- |
 | codex/gpt-image-2.5 | OpenAI 输出 $30 / 1M image tokens（medium 4096 tokens ≈ $0.123） | ≈ ¥0.9 |
@@ -57,8 +53,7 @@
 ## 前端交付与缓存
 
 正式页面采用已批准 B 衣橱 + A 工作台，只有一套 CSS 令牌；系统字体、自有 SVG、原生 dialog，无外链字体或 CDN。
-HTML、JS、CSS 每次重新验证（`Cache-Control: no-cache`），防止无构建 ESM 导入链混合新旧版本；图片保留短缓存。
-本项目无构建产物，运行实例直接读取 public 源码；发布验证需对照实际 HTTP 文件内容与本地源码摘要。
+HTML、JS、CSS 每次重新验证（`Cache-Control: no-cache`）；图片保留短缓存。构建后用 HTTP 对照 `public/dist/app.js` 的 SHA-256，图像来源单独核验。
 
 ## 复用决策
 复用 Node 内建网络、JSON、字节校验、超时取消与现有 node --test 断言；薄适配一个 OpenAI 兼容的图片服务，不自建模型协议、不引入 SDK、不引入 OpenAI 官方包（`fetch` + `FormData` + `Blob` 都是 Node 24 内建）。

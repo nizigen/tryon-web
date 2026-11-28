@@ -4,6 +4,15 @@ import { decodeBase64, decodeImage, MAX_BODY_BYTES, MAX_OUTPUT_BYTES, sniff } fr
 export const DEFAULT_TIMEOUT_MS = 120_000;
 export const DEFAULT_MODEL = 'codex/gpt-image-2.5';
 const DEFAULT_BASE_URL = 'http://127.0.0.1:3425/v1';
+const RETIRED_MODEL_IDS = new Set(['comfyui/foxbaze-tryon', 'idm/idm-vton']);
+
+export function isRetiredImageModel(id) {
+  return typeof id === 'string' && RETIRED_MODEL_IDS.has(id.trim().toLowerCase());
+}
+
+function activeModelIds(ids) {
+  return [...new Set(ids.filter((id) => !isRetiredImageModel(id)))];
+}
 
 /**
  * 取一个 OpenAI 兼容服务的根地址（含 /v1 这类版本前缀）。
@@ -149,7 +158,7 @@ export async function listModels(env, fetchImpl, signal) {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-  if (explicit.length) return [...new Set(explicit)];
+  if (explicit.length) return activeModelIds(explicit);
 
   const fallback = String(env.IMAGE_MODEL ?? '').trim() || DEFAULT_MODEL;
   let ids = [];
@@ -173,9 +182,9 @@ export async function listModels(env, fetchImpl, signal) {
     // 有些兼容服务根本没有 /models，或者目录暂时不可用。这时用 IMAGE_MODEL 兜底，
     // 而不是让整个功能失效——真正的可达性由生成请求自己说话。
     if (signal?.aborted) throw signal.reason;
-    return [fallback];
   }
-  return [...new Set([...ids, fallback])];
+  const available = activeModelIds([...ids, fallback]);
+  return available.length ? available : [DEFAULT_MODEL];
 }
 
 export function deadline(timeoutMs, externalSignal) {
@@ -237,8 +246,9 @@ async function fetchImageUrl(url, baseUrl, env, fetchImpl, signal) {
 export async function generateImage({ model, prompt, referenceImages, quality, size }, env, fetchImpl, { timeoutMs = DEFAULT_TIMEOUT_MS, signal } = {}) {
   const clock = deadline(timeoutMs, signal);
   try {
-    const models = await listModels(env, fetchImpl, clock.signal);
-    if (!models.includes(model)) throw new HttpError(400, 'MODEL_UNAVAILABLE', '所选模型已不可用，请重新加载配置', 'model');
+    if (isRetiredImageModel(model) || !(await listModels(env, fetchImpl, clock.signal)).includes(model)) {
+      throw new HttpError(400, 'MODEL_UNAVAILABLE', '所选模型已不可用，请重新加载配置', 'model');
+    }
     const images = (Array.isArray(referenceImages) ? referenceImages : []).filter((value) => typeof value === 'string' && value);
     const payload = { model, prompt, n: 1, response_format: 'b64_json' };
     if (size) payload.size = size;

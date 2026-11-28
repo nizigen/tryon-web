@@ -1,3 +1,5 @@
+import { DEFAULT_PERSON_URL } from '../lib/person.js';
+
 const direction = document.body.dataset.direction || 'a';
 const names = { a: 'A · 摄影工作台', b: 'B · 衣橱搭配室', c: 'C · 轻量分步试穿' };
 const paths = { hanger: '<path d="M9 6a3 3 0 1 1 4 2.8V11l8 5a2 2 0 0 1-1 4H4a2 2 0 0 1-1-4l9-5"/>', studio: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 7h8M8 17h8M12 9v6"/>', wardrobe: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 3v18M9 11v2m6-2v2"/>', settings: '<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2" fill="var(--paper)"/><circle cx="16" cy="12" r="2" fill="var(--paper)"/><circle cx="10" cy="18" r="2" fill="var(--paper)"/>', orders: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>', plus: '<path d="M12 5v14M5 12h14"/>', more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>', close: '<path d="m6 6 12 12M6 18 18 6"/>', check: '<path d="m5 12 4 4L19 6"/>', search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>', upload: '<path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/>', link: '<path d="m10 13 4-4m-6 5-2 2a3 3 0 0 0 4 4l4-4m-4-8 4-4a3 3 0 0 1 4 4l-2 2"/>', edit: '<path d="m15 4 5 5M4 20l5-1L20 8a3 3 0 0 0-4-4L5 15z"/>', trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>', sparkle: '<path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6z"/>', shield: '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/>', back: '<path d="m14 5-7 7 7 7"/>', image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="2"/><path d="m3 17 6-6 4 4 3-3 5 5"/>' };
@@ -33,7 +35,7 @@ let step = 0;
 let fit = '合身';
 let notes = '';
 let resultView = false;
-let personUrl = '/model/model-front.png';
+let personUrl = DEFAULT_PERSON_URL;
 let timer;
 const img = item => `/catalog/${item.image}.jpg`;
 const nav = [['studio', 'studio', '试穿工作台'], ['wardrobe', 'wardrobe', '我的衣橱'], ['settings', 'settings', '设置'], ['orders', 'orders', '试穿记录']];

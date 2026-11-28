@@ -1,10 +1,11 @@
-const paths = {
+export const paths = {
   hanger: ['M9 6a3 3 0 1 1 4 2.8V11l8 5a2 2 0 0 1-1 4H4a2 2 0 0 1-1-4l9-5'],
   studio: ['M8 7h8M8 17h8M12 9v6', 'M7 3h10a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z'],
   wardrobe: ['M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3ZM12 3v18M9 11v2m6-2v2'],
   settings: ['M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4'],
   orders: ['M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM9 8h6M9 12h6M9 16h3'],
   search: ['M16 10a6 6 0 1 1-12 0 6 6 0 0 1 12 0Zm-1 5 5 5'],
+  arrow: ['M4 12h15m-6-6 6 6-6 6'],
   plus: ['M12 5v14M5 12h14'],
   close: ['m6 6 12 12M6 18 18 6'],
   check: ['m5 12 4 4L19 6'],
@@ -17,16 +18,3 @@ const paths = {
   shield: ['m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Zm-4 9 3 3 5-6'],
   image: ['M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm-3 14 6-6 4 4 3-3 5 5'],
 };
-
-export function icon(name) {
-  const namespace = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(namespace, 'svg');
-  for (const [key, value] of Object.entries({ class: 'icon', viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' })) svg.setAttribute(key, value);
-  for (const d of paths[name] ?? paths.image) {
-    const path = document.createElementNS(namespace, 'path');
-    path.setAttribute('d', d);
-    if (name === 'more') path.setAttribute('stroke-width', '4');
-    svg.append(path);
-  }
-  return svg;
-}

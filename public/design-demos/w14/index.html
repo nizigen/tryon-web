@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>衣橱 · 照花</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./fitting.css">
+  <script type="module" src="./preview.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="frame site-header__row">
+      <a class="wordmark" href="#closet"><img src="/icon.svg" alt="" width="27" height="27">照花</a>
+      <nav class="destinations" aria-label="主导航">
+        <a href="#closet" data-destination="closet" aria-current="page">衣橱</a>
+        <a href="#fitting" data-destination="fitting">试衣间</a>
+      </nav>
+      <span class="preview-label">界面预览</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="frame screen-head">
+      <div class="screen-title">
+        <h1 id="page-title" tabindex="-1">衣橱</h1>
+        <span id="catalog-count" class="muted" role="status" data-closet-only></span>
+      </div>
+      <label class="search" data-closet-only>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>
+        <input id="closet-search" type="search" autocomplete="off" placeholder="搜索衣物" aria-label="搜索衣物">
+      </label>
+    </div>
+    <section data-screen="closet" aria-label="衣橱">
+      <div class="closet-scroll">
+        <div class="frame closet">
+          <div id="filters" class="filters" role="group" aria-label="衣物分类"></div>
+          <div class="closet-sheet" id="closet-sheet"></div>
+          <p id="catalog-empty" class="catalog-empty muted" hidden>没有找到衣物，试试其他关键词或分类。</p>
+          <p class="catalog-origin muted">样衣图由 AI 生成</p>
+          <noscript><p>请启用 JavaScript 查看衣物和搭配。</p></noscript>
+        </div>
+      </div>
+      <aside class="look-dock" aria-labelledby="dock-title">
+        <div class="frame look-dock__row">
+          <div class="dock-heading">
+            <h2 id="dock-title">待试衣物</h2>
+            <span class="muted" data-look-count></span>
+          </div>
+          <ul class="look-list look-list--dock" aria-label="已选衣物" data-look-list></ul>
+          <button class="primary dock-next" type="button" id="to-fitting" disabled>
+            去试衣间 <span aria-hidden="true">→</span>
+          </button>
+          <p class="look-feedback" data-look-feedback hidden></p>
+        </div>
+      </aside>
+    </section>
+
+    <section class="frame fitting" data-screen="fitting" aria-label="试衣间" hidden>
+      <div class="fitting-grid">
+        <section class="proof" aria-labelledby="proof-title">
+          <div class="proof-head">
+            <h2 id="proof-title">人物参考</h2>
+            <a id="proof-original" target="_blank" rel="noopener" aria-label="在新标签页查看原图">查看原图 <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="proof-stage" id="proof-stage">
+            <img id="proof-image" alt="">
+            <div class="proof-empty" id="proof-empty" hidden>
+              <h3>还没有成片</h3>
+              <p class="muted">完成试拍后，照片会出现在这里。</p>
+            </div>
+          </div>
+          <div class="proof-controls" role="group" aria-label="切换照片">
+            <button type="button" data-proof="front" aria-pressed="true">全身</button>
+            <button type="button" data-proof="turnaround" aria-pressed="false">三视图</button>
+            <button type="button" data-proof="makeup" aria-pressed="false">定妆</button>
+            <button type="button" data-proof="result" aria-pressed="false">成片</button>
+          </div>
+        </section>
+
+        <div class="fitting-order">
+          <section class="order-look" aria-labelledby="order-look-title">
+            <div class="order-look__heading">
+              <div class="screen-title">
+                <h2 id="order-look-title">待试衣物</h2>
+                <span class="muted" data-look-count></span>
+              </div>
+              <a href="#closet" id="edit-look">回衣橱选衣</a>
+            </div>
+            <ul class="look-list look-list--order" aria-label="已选衣物" data-look-list></ul>
+            <p class="look-feedback" data-look-feedback hidden></p>
+          </section>
+          <fieldset class="shoot-modes">
+            <legend>拍摄方式</legend>
+            <label class="shoot-option">
+              <input type="radio" name="shoot-mode" value="single" checked>
+              <span>普通试穿</span><small>1 张</small>
+            </label>
+            <label class="shoot-option">
+              <input type="radio" name="shoot-mode" value="studio">
+              <span>无影棚</span><small>3 个姿势</small>
+            </label>
+          </fieldset>
+          <button class="primary review-shoot" type="button" id="review-shoot" disabled>核对试拍</button>
+          <p class="preview-footnote muted">仅预览流程，不提交生图。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <p id="announcement" class="visually-hidden" role="status"></p>
+
+  <dialog id="shoot-review" aria-labelledby="review-title" aria-describedby="review-note">
+    <form method="dialog">
+      <h2 id="review-title">试拍确认</h2>
+      <p id="review-summary"></p>
+      <p class="muted" id="review-note">此预览不会生成或保存照片。</p>
+      <div class="dialog-actions">
+        <button class="quiet" value="back" autofocus>返回</button>
+        <button class="primary" value="result">查看成片区</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

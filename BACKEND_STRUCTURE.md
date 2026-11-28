@@ -1,12 +1,12 @@
 # BACKEND_STRUCTURE — 数据模型、API 契约、计费与安全
 
-## W5：IDM HTTP 边界与订单接线
+W9 测试期间，新订单统一以零分写入，保留档位对应的真实模型参数、输入校验、单任务限制与结果票据。充值入口停止接受新交易，已有记录继续可读，重启时按旧单实际冻结金额处理。旧设置和环境变量不能重新开启应用内计费。本文历史增量里的冻结规则只适用于存量订单。
 
-新增 `src/idm.mjs` 薄适配，复用 `decodeImage/decodeBase64/sniff` 与 `deadline/readUpstream`。模型 ID `idm/idm-vton`；只读 `GET /api/workflows/idm/status` 回 `{configured,ready,message}`。生成只走现有 `/api/orders`：preflight 先校验全部 pieces 的分类/件数和健康，再占位建单。任务内新增无图片的 `{slot,layer,garmentType,name}` 元数据，与现有有序 referenceImages 一一对应；不增加另一套订单/状态模型。
+W10 内置棚拍输入契约为「11-26 正面全身、同人定妆照、按层排序的单品、所选 PoseWear 骨架」。图 1 只定身材与长黑发长度；图 2 的固定路径为 `/model/posewear-01/face-studio-makeup.png`，当前 R5 提供自然披发与 R4b 的五官、脸型和妆面。v3r3 是制作和核对定妆照的身份母本。服务端负责选择文件、核对 SHA-256，并在建单前报告 `FACE_REFERENCE_INVALID`；客户端不能指定另一张脸图。普通试穿和显式自传人物各使用自身的外观。
 
-远端 `POST /tryon` 仅收 `{person,garment,category,description,seed}`，图片为纯 base64；分类 upper_body/lower_body/dresses，一次一件。服务启动前按 manifest/receipt 逐件 SHA 校验、缓存 Parsing/OpenPose/DensePose 预测器与 SDXL pipeline；忙时在读请求/解码前拒入。内部补白不拉伸，结果裁回原人物画框。Node 适配先验证全部引用与单品，再逐件调用，前段内联结果成为后段人物，不跟随重定向、不代取第三方 URL。响应体 ≤24MiB、图 ≤16MiB、下一段输入 ≤8MiB、严格 base64/图头；错误不转发远端路径/凭据。任一阶段失败沿用整单失败/全额退款；远端超时后或仍运行，不做自动重发。
+W11 的内置人物图 1 使用从 R5 三视图正面导出的 `model-front.png`，继承 11-26 的身材、衣着与姿势。工作台与设计预览从同一资产登记生成版本链接，棚拍输入图序沿用上述契约。
 
-应用人像/中间图只在任务内存流转；验证脚本的参考图/样本另存为显式实验产物，不代表服务会留存所有用户图。鞋袜/配饰无 IDM 分类；同部位串联不保证露出领口或内层，页面与文档据实表达。
+普通试穿与无影棚均调用 `src/imageapi.mjs` 的多图编辑接口。设置写入、下单、旧同步接口及底层生成器显式收到已停用的试穿模型时，直接返回 400 `MODEL_UNAVAILABLE`，不查询模型目录也不发起生成。存量设置选中过旧模型且当前目录有有效模型时，下单缺省使用当前默认模型。历史订单按原记录提供详情与结果。
 
 ## 模块划分
 
@@ -15,28 +15,26 @@ server.mjs            入口：node --env-file-if-exists=.env server.mjs
 src/app.mjs           HTTP 路由、中间件、静态资源、结果票据
 src/imageapi.mjs      OpenAI 兼容图片服务：模型目录、images/generations 与 images/edits
 src/prompt.mjs        服装分类体系与结构化提示词
-src/pricing.mjs       按模型/档位的定价表与成本估算
+src/pricing.mjs       模型档位、质量、尺寸与零分兼容字段
 src/source.mjs        商品链接取图：平台识别、短链跟随、淘宝/抖音直连、OpenCLI 兜底、TTL 缓存
 src/wardrobe.mjs      我的衣橱：入库（上传 / 导入结果）、编辑、取图、删除、BM25 检索
 src/caption.mjs       视觉描述：调对话模型给单品写一句中文描述（失败返回空串）
 src/outfit.mjs        AI 今日穿搭：检索候选 → 模型选搭（严格校验）→ 规则回退
 src/login.mjs         扫码登录：拉起受控 Chrome、CDP 读全量 cookie（含 HttpOnly）、写 cookies.json
 src/cookies.mjs       cookie 文件路径与读取
-src/store.mjs         JSON 持久化（商品、会话、订单、充值单、设置）
-src/tryon.mjs         试穿任务编排（占位→扣费→生成→扣减/退回）
+src/store.mjs         会话、零分订单、历史账目与设置的原子持久化，读取商品目录
+src/tryon.mjs         占位、排队、生成、结果写入及中断订单恢复
 src/validate.mjs      图片/字段校验与限额
 src/errors.mjs        统一错误类型
 ```
 
-## ComfyUI 与分层契约（2026-11-24）
+## 单品分层
 
 - 衣橱与订单 pieces 新增 layer enum auto/inner/middle/outer；非法值400，旧数据视为auto。auto 依品类推导有效层；先层后 SLOT_ORDER 排列并共用于图和提示词。
-- 模型目录增加 comfyui/foxbaze-tryon；它复用 settings.model 和原订单链路，最多三件服装，固定标准实验档零应用费用（租卡成本由环境持有者承担，未估价）。
-- GET /api/workflows/status 只读配置与 /object_info，返回 configured/ready/message，不回地址、密钥或文件路径；下单时同样先预检再占位扣费。
-- ComfyUI adapter 只连环境配置的根地址，拒绝重定向，限响应体/输出大小，单任务独立prompt_id，失败/超时走原退款。工作流等待默认900秒（可设 COMFYUI_TIMEOUT_MS），普通API仍120秒。超时仅尝试从queue删除当前prompt，不中断其它任务；无法保证远端已停止。
-- 人像上传后会暂存在ComfyUI input目录及历史，区别于本应用内存；4090管理员必须按手册清理专用实例输入/历史。本应用不声称远端不落盘。
 
 ## 数据模型
+
+无影棚首张人物图跟随当前选择。显式 `upload` 保留来图身份，即使它与内置正面照逐字节相同。`builtin` 必须匹配登记的全身 PNG 字节；缺省 `personSource` 的旧请求由服务端按字节判定。内置棚拍的定妆文件缺失或摘要不符时停止该次生成。上传人像与其指纹只在请求内使用。
 
 **商品**（只读目录 `data/catalog.json`）
 
@@ -54,7 +52,7 @@ src/errors.mjs        统一错误类型
 
 **会话 sessions[]**（`data/state.json`）：`id`、`deviceId`、`balanceCents`（余额，单位分）、`createdAt`、`lastSeenAt`。
 
-**订单 orders[]**：`id`、`sessionId`、`productId`、`productName`、`model`、`tier`、`quality`、`size`、`category`、`garmentType`、`slots`、`pieces`、`photographyMode`、`studioPreset`、`posePreset`、`prompt`、`priceCents`、`costCents`、`status`、`jobId`、`resultFile`、`createdAt`、`finishedAt`、`errorCode`、`errorMessage`。
+**订单 orders[]**：`id`、`sessionId`、`productId`、`productName`、`model`、`tier`、`quality`、`size`、`category`、`garmentType`、`slots`、`pieces`、`photographyMode`、`studioPreset`、`posePreset`、`prompt`、`priceCents`、`status`、`jobId`、`resultFile`、`createdAt`、`finishedAt`、`errorCode`、`errorMessage`。旧记录可含 `costCents`；曾冻结的中断单恢复时记录 `refund:{status,amountCents}`。
 
 - `status`：`pending`（排队/生成中）· `success` · `failed` · `expired`（结果已过期清理）。
 - `slots` 是这次搭配用到的格子（`top/outer/bottom/dress/hosiery/shoes/accessory`，accessory 可出现两次）；`pieces` 记录每格的服装子类与名称，不含图片。
@@ -82,57 +80,45 @@ src/errors.mjs        统一错误类型
 
 **充值单 payments[]**：`id`、`sessionId`、`packId`、`amountCents`、`status`（pending/paid）、`createdAt`、`paidAt`。
 
-写盘方式：写 `state.json.tmp` 后 rename；会话/订单/充值单按数量上限滚动保留（500/200/100）。
+写盘方式为临时文件原子替换。滚动保留普通会话与订单，同时保留历史付费订单、未完成订单、旧充值记录及关联会话。
 
-## 定价表（src/pricing.mjs，单次试穿，单位分）
+## 测试期模型档位
 
-| model | tier | quality | 单次售价 | 成本估算 | 定位 |
-| --- | --- | --- | --- | --- | --- |
-| minimax-code/MiniMax-Image | fast | medium | 190 | 30 | 引流档 |
-| workbuddy/hunyuan-image-alpha | fast | medium | 290 | 40 | 均衡档 |
-| workbuddy-ai/hy-image-3.5 | fast | medium | 390 | 40 | 均衡档 |
-| codex/gpt-image-2.5 | standard | medium | 690 | 90 | 精档（主力） |
-| codex/gpt-image-2.5 | premium | high | 1390 | 350 | 尊档 |
-| 其它模型 | fast | medium | 390 | 100 | 兜底：目录新模型按默认价，管理员可在 pricing.mjs 覆盖 |
-
-档位不属于该模型时直接 400（不静默回落），避免扣费与前端展示价不一致。
-
-充值包：体验包 ¥1.9、轻享包 ¥9.9、畅玩包 ¥29.9；余额通用，按当前最低档位价折算可试次数。
+`src/pricing.mjs` 保存各模型可用的档位、质量和尺寸。模型与档位不匹配返回 400。所有新订单 `priceCents` 均为 0，配置与会话接口的 `packs` 为空数组。
 
 ## 试穿事务语义
 
-1. `POST /api/orders` 校验字段 → 校验会话 → 校验模型与档位 → 解析每件单品的服装图 → **占位**（同一会话已有任务则 409）→ 校验余额 → **扣费（冻结）** → 建订单 → 建任务 → 返回。
-2. 任务成功：订单 success，冻结额度转为实扣；结果图写入 `data/results/<orderId>.<ext>`。
-3. 任务失败/超时/上游无图：订单 failed，冻结额度**全额退回**，记录 `errorCode` 与脱敏错误文案。
-4. 占位之后任何异常（含建单失败、某件单品取图失败）都会释放占位并退款，不会出现"扣了钱但没有任务"。
-5. 进程重启后内存任务丢失：启动时把磁盘上仍为 `pending` 的订单置为 `failed`（`INTERRUPTED`）并退款。
-6. 结果图 24 小时后清理，同时把关联订单置为 `expired`。
-7. **演示模式**（`DEMO_MODE=1`）：`priceCents`/`costCents` 一律为 0，跳过余额校验与扣费，`POST /api/payments` 与确认接口返回 403 `PAYMENT_DISABLED`。任务编排与结果产物和真实模式完全一致，便于验收。
+1. `POST /api/orders` 校验会话、模型、档位及输入后，占用会话的任务名额（同会话同时提交返回 409），创建零分订单和任务，持久化该订单的 `jobId` 后才启动生成。
+2. 成功时写入 `data/results/<orderId>.<ext>`，失败时记录实际错误并释放名额。新订单在两种结果下均不改变余额。
+3. 重启将遗留 `pending` 单置为 `failed`，标记 `INTERRUPTED`。旧付费单与退款在同一次原子写入中结算；若旧会话已被淘汰，保留原 `sessionId`、冻结金额及 `refund.status=needs_review` 供核对，其它订单继续恢复。
+4. 结果保留 24 小时，到期将关联订单置为 `expired`。两种启动模式均拒绝充值与确认请求；`DEMO_MODE=1` 继续使用规则选搭并关闭旧直连生成入口。
 
 ## API 契约
+
+未注册的 API 路径返回 404 `NOT_FOUND`。路径已注册但不支持所用 HTTP 方法时返回 405 `METHOD_NOT_ALLOWED`，响应头 `Allow` 列出该路径已注册的方法。
 
 所有响应 `application/json; charset=utf-8`。错误统一形状：
 
 ```json
-{ "error": { "code": "INSUFFICIENT_BALANCE", "message": "余额不足，还差 500 分", "field": "balance" } }
+{ "error": { "code": "INVALID_REQUEST", "message": "所选档位不属于该模型", "field": "tier" } }
 ```
 
 | 方法 | 路径 | 入参 | 出参 |
 | --- | --- | --- | --- |
-| GET | /api/config | — | `{ models:[{id,label,tiers:[{id,label,quality,size,priceCents,costCents}]}], defaultModel, defaultTier, tryOnFromCents, packs, categories, slots, garmentTypes, fits, studioPresets:[{id,label,hint}], posePresets:[{id,label,hint,posewearId,referenceUrl}], defaultStudioPreset, defaultPosePreset, demoMode, gateway:{reachable}, limits }` |
+| GET | /api/config | — | `{ models:[{id,label,tiers:[{id,label,quality,size,priceCents:0}]}], defaultModel, defaultTier, tryOnFromCents:0, packs:[], categories, slots, garmentTypes, fits, studioPresets:[{id,label,hint}], posePresets:[{id,label,hint,posewearId,referenceUrl}], defaultStudioPreset, defaultPosePreset, demoMode, gateway:{reachable}, limits }` |
 | GET | /api/products | `?category=&q=&limit=` | `{ products:[Product] }` |
 | GET | /api/products/:id | — | `{ product: Product }` |
 | POST | /api/session | `{ deviceId }` | `{ sessionId, balanceCents, packs }` |
 | GET | /api/session/:id | — | `{ sessionId, balanceCents, packs }` |
 | GET | /api/settings | — | `{ model, models, demoMode, sources:{taobao,jd,pdd,douyin}, gateway:{reachable} }`（`sources` 只回布尔，不回 cookie） |
 | PATCH | /api/settings | `{ model }` | `{ model }` |
-| POST | /api/orders | `{ sessionId, pieces:[{slot, garmentType?, source}], model, tier, fit?, prompt?, person, photographyMode?, studioPreset?, posePreset? }`；`pieces[].source` 为 `{kind:'product', productId}` / `{kind:'import', sourceId, sourceIndex, name}` / `{kind:'upload', garment}` / `{kind:'wardrobe', wardrobeId}`；兼容旧的单件入参 `{productId?/category?/garmentType?/sourceId?/sourceIndex?/sourceName?, garment?}` | `{ order:{id,status,slots,priceCents}, orderId, jobId, priceCents, balanceCents }` |
+| POST | /api/orders | `{ sessionId, pieces:[{slot, garmentType?, source}], model?, tier?, fit?, prompt?, person, personSource?, photographyMode?, studioPreset?, posePreset? }`；`pieces[].source` 为 `{kind:'product', productId}` / `{kind:'import', sourceId, sourceIndex, name}` / `{kind:'upload', image}` / `{kind:'wardrobe', wardrobeId}`；兼容旧的单件入参 `{productId?/category?/garmentType?/sourceId?/sourceIndex?/sourceName?, garment?}` | `{ order:{id,status,slots,priceCents}, orderId, jobId, priceCents, balanceCents }` |
 | GET | /api/orders | `x-session-id` | `{ orders:[Order] }`（含 jobId、slots，不含 costCents） |
-| GET | /api/orders/:id | `x-session-id` | `{ order:Order, resultToken }` |
+| GET | /api/orders/:id | `x-session-id` | `{ order:{...Order, hasResult, resultToken} }` |
 | GET | /api/jobs/:id | — | `{ jobId, orderId, status, stage, error?, updatedAt }` |
 | GET | /api/results/:file | `?k=<token>` | 结果图二进制（票据缺失或过期返回 403） |
-| POST | /api/payments | `{ sessionId, packId }` | `{ paymentId, amountCents, status:"pending", channels:[], notice }`（**本地模拟**，部署形态与演示模式默认关闭） |
-| POST | /api/payments/:id/confirm | `{ sessionId }` | `{ paymentId, status:"paid", balanceCents }`（**本地模拟**） |
+| POST | /api/payments | 旧客户端兼容入口 | 403 `PAYMENT_DISABLED` |
+| POST | /api/payments/:id/confirm | 旧客户端兼容入口 | 403 `PAYMENT_DISABLED` |
 | POST | /api/tryon | `{ model, person, garment, category, garmentType?, tier?, prompt? }` | 同步生成结果（兼容/本地直连；部署形态与演示模式默认关闭） |
 | GET | /api/wardrobe | — | `{ items:[{id,name,category,subtype,tags,description,source,imageUrl,createdAt}] }` |
 | POST | /api/wardrobe | `{ name, category, subtype?, tags?, description?, image }` 或 `{ ..., sourceId, sourceIndex }`（从导入结果取图） | `{ item }`（201） |
@@ -153,8 +139,8 @@ src/errors.mjs        统一错误类型
 - 七个格子：`top` 上衣、`outer` 外套、`bottom` 下装、`dress` 连衣裙、`hosiery` 袜、`shoes` 鞋、`accessory` 配饰。
 - 每个格子最多一件，`accessory` 最多两件，单次总件数 ≤5（`limits.maxPieces`）。
 - `dress` 与 `top`/`bottom` 互斥（同时出现返回 400）。
-- 服务端按 `SLOT_ORDER`（top → outer → bottom → dress → hosiery → shoes → accessory）排序后再拼提示词与参考图，保证「reference image N」编号与实际顺序一致：第 1 张恒为人物，其后依次为各件单品。
-- 每件单品的服装图在**占位之前**全部取好（目录商品读盘、导入走 `sourceId`、上传走 data URL、衣橱走 `wardrobeId`），任一件失败都不会占用任务槽或扣费。
+- 单品按有效穿着层排序，同层再按 `SLOT_ORDER`；相同次序用于图号与上传。第 1 张恒为人物；内置棚拍的单品从第 3 张起，其余从第 2 张起。
+- 每件单品的服装图在**占位之前**全部取好（目录商品读盘、导入走 `sourceId`、上传走 data URL、衣橱走 `wardrobeId`），任一件失败都不会占用任务槽。
 
 ### 我的衣橱（src/wardrobe.mjs）
 
@@ -203,9 +189,9 @@ src/errors.mjs        统一错误类型
 - 请求体 ≤24MiB；输出图 ≤16MiB。
 - `prompt` ≤500 码点，只能细化面料/版型/场景；拼接时置于受控段并做单行化与限长。
 - `pieces`：`slot` 必须属于七格白名单；`garmentType` 必须属于该格的服装子类；每格至多一件（`accessory` 至多两件）；总数 ≤5；`dress` 与 `top`/`bottom` 互斥。
-- `photographyMode` 缺省为 `preserve`，保持旧请求行为；`studio` 必须在取图、扣费、建单前验证 `studioPreset` 与 `posePreset` 属于服务端固定目录，非字符串姿势 ID 一律 400。无影棚三姿势由前端顺序创建三笔独立订单，服务端不新增批量订单状态机。
-- 无影棚生成按 `[人物, ...有序服装, 本地 PoseWear 参考图]` 组装，姿势图固定为最后一张且只提供骨骼与身体力学；订单只持久化姿势 ID，不持久化姿势图或人像。输出尺寸固定为 `1024x1536`（2:3），提示词不得声明另一画幅。
-- 仅支持多参考图编辑的图片模型接受 `studio`；IDM-VTON 与 ComfyUI 拼图工作流在取图、扣费前返回 400 `MODEL_MODE_UNSUPPORTED`，客户端应保持普通试穿并禁用无影棚入口。
+- `photographyMode` 缺省为 `preserve`。`studio` 在取图、建单前验证 `studioPreset` 与 `posePreset` 属于服务端固定目录，非字符串姿势 ID 返回 400。三姿势由前端依次建三张独立订单。
+- 内置棚拍依次上传人物全身、同人定妆 PNG、服装和 PoseWear 骨架。自传棚拍从图 2 起放衣物，普通换装只发人物和衣物。订单保存姿势 ID 和图片角色对应的提示词；棚拍请求指定 `1024x1536`。
+- 无影棚依赖所选图片模型接受多参考图编辑，生成失败时保留上游错误与订单状态。
 - 模型必须出现在当前 `GET /v1/models` 目录中（或由 `IMAGE_MODELS` 显式指定）；档位必须属于该模型，否则 400。
 - 并发：同一会话同时只允许一个进行中任务（409）。
 - 商品链接：只接受 http/https，主机必须在平台白名单内；最多 40 张图；外部商品标题按不可信文本截断到 80 码点后才进提示词。
@@ -217,9 +203,9 @@ src/errors.mjs        统一错误类型
 ## 安全
 
 - 开发态仅监听 127.0.0.1，校验 `Host`/`Origin`/`Sec-Fetch-Site`；对外署形态需显式 `PUBLIC_ORIGIN` 白名单与 HTTPS 反代（**本轮不部署**）。
-- 部署形态（设置了 `PUBLIC_ORIGIN`）默认关闭本地模拟充值与 `/api/tryon` 直连生成，需显式 `ENABLE_SIMULATED_PAYMENTS=1` 才开启。
+- `PUBLIC_ORIGIN` 下默认关闭旧同步 `/api/tryon`。可信部署可用 `ENABLE_RAW_TRYON=1` 开启该入口；旧 `ENABLE_SIMULATED_PAYMENTS=1` 仅保留相同的直连兼容行为。充值创建与确认始终返回 403。
 - 会话 ID 为随机不可猜测串，仅用于本地演示级归属，**不等于真实鉴权**；真实身份应接抖音/微信登录（`code2session` → openid），本轮留桩未接入。
-- 演示模式（`DEMO_MODE=1`）只影响计费与前端展示，不降低鉴权或校验强度；开启时充值接口显式 403，避免演示环境被当成真实收款通道。
+- `DEMO_MODE=1` 使用规则选搭并关闭旧同步生成入口。两种模式的正常试穿均通过零分订单调用所选模型。
 - 人像与服装图只在任务内存中流转，不写入订单与磁盘；结果图落盘并按 TTL 清理。
 - 结果图访问使用带时效的 HMAC 票据，不把会话标识放进 URL。
 - 日志与错误消息不含 base64、凭据、完整上游响应体。

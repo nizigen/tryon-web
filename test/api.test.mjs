@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { hash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { createApp } from '../src/app.mjs';
-import { WORKFLOW_ID, workflowGraph } from '../src/comfy-workflow.mjs';
-import { IDM_ID } from '../src/idm.mjs';
 import { createSourceService } from '../src/source.mjs';
 import { createStore } from '../src/store.mjs';
 import { createTryonService } from '../src/tryon.mjs';
@@ -58,52 +57,12 @@ function makeFetch({ models = MODELS, fail = false, slowMs = 0, record = [] } = 
       return new Response('not found', { status: 404 });
     }
     record.push({
+      model: target.endsWith('/images/edits') ? options.body.get('model') : JSON.parse(options.body).model,
       prompt,
       reference_images: referenceImages,
       size: target.endsWith('/images/edits') ? options.body.get('size') : JSON.parse(options.body).size,
     });
     return jsonResponse({ created: 1, data: [{ b64_json: PNG, mime_type: 'image/png' }] });
-  };
-}
-
-function makeWorkflowFetch({ fail = false, record = { uploads: [], prompts: [], paths: [] } } = {}) {
-  const imageFetch = makeFetch();
-  const graph = workflowGraph({ images: ['person.png', 'garment.png'] });
-  const info = {};
-  for (const node of Object.values(graph)) {
-    info[node.class_type] ??= { input: { required: {} } };
-    for (const [key, value] of Object.entries(node.inputs)) {
-      info[node.class_type].input.required[key] = [Array.isArray(value) ? 'IMAGE' : typeof value === 'string' ? 'STRING' : typeof value === 'boolean' ? 'BOOLEAN' : 'FLOAT'];
-    }
-  }
-  return async (url, options) => {
-    const target = new URL(url);
-    if (target.origin !== 'http://comfy.test') return imageFetch(url, options);
-    record.paths.push(target.pathname);
-    if (target.pathname === '/object_info') return jsonResponse(info);
-    if (target.pathname === '/upload/image') {
-      assert.equal(options.method, 'POST');
-      assert.equal(options.body.get('type'), 'input');
-      assert.equal(options.body.get('overwrite'), 'false');
-      record.uploads.push(await toDataURL(options.body.get('image')));
-      return jsonResponse({ name: `upload-${record.uploads.length}.png`, subfolder: '', type: 'input' });
-    }
-    if (target.pathname === '/prompt') {
-      assert.equal(options.method, 'POST');
-      record.prompts.push(JSON.parse(options.body).prompt);
-      return jsonResponse({ prompt_id: 'workflow-test' });
-    }
-    if (target.pathname === '/history/workflow-test') {
-      return jsonResponse({ 'workflow-test': fail
-        ? { status: { status_str: 'error', completed: false } }
-        : { status: { status_str: 'success', completed: true }, outputs: { output: { images: [{ filename: 'generated.png', subfolder: '', type: 'output' }] } } } });
-    }
-    if (target.pathname === '/view') {
-      assert.equal(target.searchParams.get('filename'), 'generated.png');
-      assert.equal(target.searchParams.get('type'), 'output');
-      return new Response(Buffer.from(PNG, 'base64'), { headers: { 'content-type': 'image/png' } });
-    }
-    assert.fail(`Unexpected ComfyUI endpoint: ${target.pathname}`);
   };
 }
 
@@ -117,6 +76,7 @@ async function withServer(options = {}, run) {
   }), 'utf8');
   const fetchImpl = options.fetchImpl ?? makeFetch({ ...options, record: options.record ?? [] });
   const env = { IMAGE_API_BASE_URL: 'http://127.0.0.1:3425/v1', ...(options.env ?? {}) };
+  if (options.savedState) await writeFile(join(dir, 'state.json'), JSON.stringify(options.savedState));
   const store = createStore({ dir, catalogFile });
   await store.ready();
   const tryon = createTryonService({ store, env, fetchImpl, resultsDir: join(dir, 'results') });
@@ -161,6 +121,9 @@ async function withServer(options = {}, run) {
   try {
     await run({ call, base, store, tryon, dir, record: options.record ?? [] });
   } finally {
+    for (const order of store.listAllOrders()) {
+      if (order.jobId && tryon.getJob(order.jobId)?.status.match(/^(running|queued)$/)) await waitForJob(call, order.jobId);
+    }
     await new Promise((resolve) => app.close(resolve));
     // 衣橱/结果的写入队列可能在关闭后仍在落盘，清理失败不应让用例假红。
     await rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -186,10 +149,11 @@ test('GET /api/config 返回模型目录、定价、分类与限制', async () =
   await withServer({}, async ({ call }) => {
     const response = await call('/api/config');
     assert.equal(response.status, 200);
-    assert.deepEqual(response.payload.models.map(({ id }) => id), [...MODELS, WORKFLOW_ID]);
+    assert.deepEqual(response.payload.models.map(({ id }) => id), MODELS);
     assert.equal(response.payload.defaultModel, 'codex/gpt-image-2.5');
     assert.equal(response.payload.defaultTier, 'standard');
-    assert.equal(response.payload.tryOnFromCents, 190);
+    assert.equal(response.payload.tryOnFromCents, 0);
+    assert.deepEqual(response.payload.packs, []);
     assert.equal(response.payload.categories.length, 3);
     assert.equal(response.payload.gateway.reachable, true);
     assert.ok(response.payload.limits.imageBytes > 0);
@@ -203,6 +167,37 @@ test('GET /api/config 返回模型目录、定价、分类与限制', async () =
   });
 });
 
+test('本地姿势归档不会进入试穿预设或静态资源', async () => {
+  await withServer({}, async ({ call }) => {
+    const { status, payload } = await call('/api/config');
+    assert.equal(status, 200);
+    assert.deepEqual(payload.posePresets.map((pose) => pose.referenceUrl).sort(),
+      ['P015.png', 'P017.png', 'P020.png', 'P041.webp', 'P049.webp', 'P063.webp'].map((file) => `/posewear/${file}`));
+    for (const path of ['/posewear/library.json', '/posewear/restricted/pair60_P001.png', '/data/posewear-archive/library.json']) {
+      assert.equal((await call(path, { method: 'HEAD' })).status, 404);
+    }
+  });
+});
+
+test('内置模特可独立下载带蒙皮和嵌入贴图的 GLB，以及单独的几何校样', async () => {
+  await withServer({}, async ({ base }) => {
+    const model = await fetch(`${base}/model/posewear-01/posewear-01.glb`);
+    assert.equal(model.status, 200);
+    assert.equal(model.headers.get('content-type'), 'model/gltf-binary');
+    const bytes = Buffer.from(await model.arrayBuffer());
+    assert.equal(bytes.toString('ascii', 0, 4), 'glTF');
+    assert.equal(bytes.readUInt32LE(4), 2);
+    assert.equal(bytes.readUInt32LE(8), bytes.length);
+    const document = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)));
+    assert.ok(document.skins.some((skin) => skin.joints.length > 1));
+    assert.ok(document.meshes.length > 1 && document.meshes.every((mesh) => mesh.primitives.every((part) => 'WEIGHTS_0' in part.attributes)));
+    assert.ok(document.images.length > 0 && document.images.every((image) => Number.isInteger(image.bufferView) && !image.uri));
+    const proof = await fetch(`${base}/model/posewear-01/fit-proof.jpg`, { method: 'HEAD' });
+    assert.equal(proof.status, 200);
+    assert.equal(proof.headers.get('content-type'), 'image/jpeg');
+  });
+});
+
 test('GET /api/products 返回橱窗商品', async () => {
   await withServer({}, async ({ call }) => {
     const response = await call('/api/products');
@@ -212,11 +207,12 @@ test('GET /api/products 返回橱窗商品', async () => {
   });
 });
 
-test('POST /api/session 建立会话并发放体验额度', async () => {
+test('POST /api/session 建立零余额会话并复用设备身份', async () => {
   await withServer({}, async ({ call }) => {
     const session = await createSession(call);
     assert.ok(session.sessionId);
-    assert.ok(session.balanceCents > 0);
+    assert.equal(session.balanceCents, 0);
+    assert.deepEqual(session.packs, []);
     const again = await call('/api/session', { method: 'POST', body: JSON.stringify({ deviceId: 'device-test' }) });
     assert.equal(again.payload.sessionId, session.sessionId);
   });
@@ -234,16 +230,26 @@ test('下单缺少人物照返回 400', async () => {
   });
 });
 
-test('余额不足时拒绝下单并给出差额', async () => {
-  await withServer({}, async ({ call, store }) => {
+test('存量普通模式零余额会话连续使用高质量档，两笔真实订单都不改余额', async () => {
+  const record = [];
+  const savedState = { sessions: [{ id: 'existing-user', deviceId: 'device-test', balanceCents: 0 }], settings: { demoMode: false } };
+  await withServer({ record, savedState, env: { DEMO_MODE: '0' } }, async ({ call, store, dir }) => {
     const session = await createSession(call);
-    await store.addBalance(session.sessionId, -session.balanceCents);
-    const response = await call('/api/orders', {
-      method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
-    });
-    assert.equal(response.status, 402);
-    assert.equal(response.payload.error.code, 'INSUFFICIENT_BALANCE');
+    assert.equal(session.sessionId, 'existing-user');
+    for (let shot = 0; shot < 2; shot += 1) {
+      const response = await call('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'premium', person: PERSON, priceCents: 1390 }),
+      });
+      assert.equal(response.status, 201);
+      assert.equal(response.payload.priceCents, 0);
+      assert.equal((await waitForJob(call, response.payload.jobId)).status, 'success');
+      assert.equal(store.getOrder(response.payload.orderId).quality, 'high');
+    }
+    const persisted = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
+    assert.equal(persisted.sessions[0].balanceCents, 0);
+    assert.deepEqual(persisted.orders.map(({ priceCents }) => priceCents), [0, 0]);
+    assert.equal(record.length, 2);
   });
 });
 
@@ -274,8 +280,95 @@ test('存下来的模型已不在目录里时退回默认模型，而不是每�
   });
 });
 
-test('下单后任务成功、扣费并可取回结果', async () => {
+test('停用模型不能设置或生成，旧设置使用可用默认模型且历史结果可读', async () => {
+  const retired = ['comfyui/foxbaze-tryon', 'idm/idm-vton'];
+  const historical = retired.map((model, index) => ({ id: `history-${index}`, model, sessionId: 'owner', status: 'success', resultFile: `history-${index}.png`, priceCents: 0 }));
+  const savedState = { sessions: [{ id: 'owner', deviceId: 'device-test', balanceCents: 0 }], orders: historical, settings: { model: retired[0] } };
+  const available = MODELS[1];
+  const record = [];
+  await withServer({ record, savedState, env: { IMAGE_MODELS: [...retired, available].join(','), IMAGE_MODEL: retired[0] } }, async ({ call, dir, store, base }) => {
+    const list = await call('/api/config');
+    assert.deepEqual(list.payload.models.map(({ id }) => id), [available]);
+    assert.equal((await call('/api/settings')).payload.model, available);
+    const { sessionId } = await createSession(call);
+    const body = { sessionId, productId: 'shirt-floral', person: PERSON };
+    for (const [index, model] of retired.entries()) {
+      const tier = ['workflow', 'idm'][index];
+      for (const [method, path, input] of [
+        ['PATCH', '/api/settings', { model }],
+        ['POST', '/api/orders', { ...body, model, tier }],
+        ['POST', '/api/orders', { ...body, model, tier, photographyMode: 'studio' }],
+        ['POST', '/api/tryon', { person: PERSON, garment: PERSON, category: 'tops', model }],
+        ['POST', '/api/tryon', { person: PERSON, garment: PERSON, category: 'tops', model, tier }],
+      ]) {
+        const response = await call(path, { method, body: JSON.stringify(input) });
+        assert.equal(response.status, 400);
+        assert.equal(response.payload.error.code, 'MODEL_UNAVAILABLE');
+      }
+    }
+    assert.equal(store.listOrders(sessionId).length, 2);
+    assert.deepEqual(record, []);
+    await mkdir(join(dir, 'results'), { recursive: true });
+    for (const order of historical) {
+      await writeFile(join(dir, 'results', order.resultFile), Buffer.from(PNG, 'base64'));
+      const detail = (await call(`/api/orders/${order.id}`, { headers: { 'x-session-id': sessionId } })).payload.order;
+      assert.equal(detail.model, order.model);
+      assert.equal(detail.status, 'success');
+      const result = await fetch(`${base}/api/results/${detail.resultFile}?k=${detail.resultToken}`);
+      assert.equal(result.status, 200);
+      assert.deepEqual(Buffer.from(await result.arrayBuffer()), Buffer.from(PNG, 'base64'));
+    }
+    const created = await call('/api/orders', { method: 'POST', body: JSON.stringify(body) });
+    assert.equal(created.status, 201);
+    assert.equal((await waitForJob(call, created.payload.jobId)).status, 'success');
+    assert.equal(store.getOrder(created.payload.orderId).model, available);
+    assert.deepEqual(record.map(({ model }) => model), [available]);
+  });
+});
+
+test('未注册 API 路径返回 404，已注册路径的方法错误返回 405 和 Allow', async () => {
   await withServer({}, async ({ call }) => {
+    for (const path of ['/api', '/api/unknown', '/api/workflows/status', '/api/workflows/idm/status']) {
+      for (const method of ['GET', 'POST']) {
+        const response = await call(path, { method });
+        assert.equal(response.status, 404);
+        assert.equal(response.payload.error.code, 'NOT_FOUND');
+        assert.equal(response.headers.get('allow'), null);
+      }
+    }
+    for (const [path, method, allowed] of [
+      ['/api/settings', 'PUT', ['GET', 'PATCH']],
+      ['/api/products/shirt-floral', 'POST', ['GET']],
+    ]) {
+      const response = await call(path, { method });
+      assert.equal(response.status, 405);
+      assert.equal(response.payload.error.code, 'METHOD_NOT_ALLOWED');
+      assert.deepEqual(response.headers.get('allow')?.split(/,\s*/).sort(), allowed);
+    }
+  });
+});
+
+test('显式选择停用模型时直接拒绝，不查询网关或连接原试穿服务', async (context) => {
+  const upstream = context.mock.fn(async () => jsonResponse({ data: [] }));
+  const env = { COMFYUI_BASE_URL: 'http://unused.test', IDM_BASE_URL: 'http://unused.test' };
+  await withServer({ env, fetchImpl: upstream }, async ({ call, store, tryon }) => {
+    const { sessionId } = await createSession(call);
+    for (const model of ['comfyui/foxbaze-tryon', 'idm/idm-vton']) {
+      const body = JSON.stringify({ sessionId, productId: 'shirt-floral', model, person: PERSON, garment: PERSON, category: 'tops' });
+      for (const [method, path] of [['PATCH', '/api/settings'], ['POST', '/api/orders'], ['POST', '/api/tryon']]) {
+        const response = await call(path, { method, body });
+        assert.equal(response.payload.error.code, 'MODEL_UNAVAILABLE');
+      }
+    }
+    assert.deepEqual(store.listOrders(sessionId), []);
+    assert.deepEqual(tryon.jobsForSession(sessionId), []);
+    assert.equal(upstream.mock.callCount(), 0);
+  });
+});
+
+test('有存量余额的会话生成成功并取回结果，余额原样保留', async () => {
+  const savedState = { sessions: [{ id: 'funded', deviceId: 'device-test', balanceCents: 990 }] };
+  await withServer({ savedState }, async ({ call }) => {
     const session = await createSession(call);
     const before = session.balanceCents;
     const created = await call('/api/orders', {
@@ -283,8 +376,8 @@ test('下单后任务成功、扣费并可取回结果', async () => {
       body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
     });
     assert.equal(created.status, 201);
-    assert.equal(created.payload.priceCents, 690);
-    assert.equal(created.payload.balanceCents, before - 690);
+    assert.equal(created.payload.priceCents, 0);
+    assert.equal(created.payload.balanceCents, before);
     const job = await waitForJob(call, created.payload.jobId);
     assert.equal(job.status, 'success');
     const order = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
@@ -292,11 +385,11 @@ test('下单后任务成功、扣费并可取回结果', async () => {
     assert.equal(order.payload.order.hasResult, true);
     assert.equal(order.payload.order.prompt, undefined, '订单详情不应回传提示词');
     const balance = await call(`/api/session/${session.sessionId}`);
-    assert.equal(balance.payload.balanceCents, before - 690);
+    assert.equal(balance.payload.balanceCents, before);
   });
 });
 
-test('生成失败时订单失败且额度退回', async () => {
+test('生成失败时订单失败，余额保持原值', async () => {
   await withServer({ fail: true }, async ({ call }) => {
     const session = await createSession(call);
     const before = session.balanceCents;
@@ -308,7 +401,7 @@ test('生成失败时订单失败且额度退回', async () => {
     const job = await waitForJob(call, created.payload.jobId);
     assert.equal(job.status, 'failed');
     const balance = await call(`/api/session/${session.sessionId}`);
-    assert.equal(balance.payload.balanceCents, before, '失败必须全额退回');
+    assert.equal(balance.payload.balanceCents, before);
     const order = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
     assert.equal(order.payload.order.status, 'failed');
   });
@@ -341,6 +434,35 @@ test('同一会话同时只能有一个进行中的试穿任务', async () => {
   });
 });
 
+test('两个会话交错启动，任务须等自己的订单写好 jobId 才能向上游发送', async () => {
+  const record = [];
+  await withServer({ record }, async ({ call, store }) => {
+    const first = await createSession(call);
+    const second = (await call('/api/session', { method: 'POST', body: JSON.stringify({ deviceId: 'second-device' }) })).payload;
+    const submit = (sessionId) => call('/api/orders', { method: 'POST', body: JSON.stringify({ sessionId, productId: 'shirt-floral', person: PERSON }) });
+    const { promise: reached, resolve: reachedFirst } = Promise.withResolvers();
+    const { promise: proceed, resolve: releaseFirst } = Promise.withResolvers();
+    const update = store.updateOrder;
+    store.updateOrder = async (id, patch) => {
+      if (patch.jobId && store.getOrder(id).sessionId === first.sessionId) { reachedFirst(); await proceed; }
+      return update(id, patch);
+    };
+    const waiting = submit(first.sessionId);
+    await reached;
+    try {
+      const other = await submit(second.sessionId);
+      assert.equal((await waitForJob(call, other.payload.jobId)).status, 'success');
+      assert.equal(record.length, 1);
+      assert.equal(store.listOrders(first.sessionId)[0].status, 'pending');
+    } finally {
+      releaseFirst();
+      const started = await waiting;
+      await waitForJob(call, started.payload.jobId);
+    }
+    assert.equal(record.length, 2);
+  });
+});
+
 test('订单只对所属会话可见', async () => {
   await withServer({ slowMs: 300 }, async ({ call }) => {
     const owner = await createSession(call);
@@ -357,15 +479,19 @@ test('订单只对所属会话可见', async () => {
   });
 });
 
-test('充值确认后余额增加', async () => {
-  await withServer({}, async ({ call }) => {
+test('即使启用历史模拟支付开关也不能新建或确认充值，旧记录原样保存', async () => {
+  const payment = { id: 'old-top-up', sessionId: 'old-session', status: 'pending', amountCents: 990 };
+  const savedState = { sessions: [{ id: 'old-session', deviceId: 'device-test', balanceCents: 17 }], payments: [payment] };
+  await withServer({ savedState, env: { ENABLE_SIMULATED_PAYMENTS: '1' } }, async ({ call, dir }) => {
     const session = await createSession(call);
-    const payment = await call('/api/payments', { method: 'POST', body: JSON.stringify({ sessionId: session.sessionId, packId: 'light' }) });
-    assert.equal(payment.status, 201);
-    assert.equal(payment.payload.status, 'pending');
-    const confirmed = await call(`/api/payments/${payment.payload.paymentId}/confirm`, { method: 'POST', body: JSON.stringify({ sessionId: session.sessionId }) });
-    assert.equal(confirmed.payload.status, 'paid');
-    assert.equal(confirmed.payload.balanceCents, session.balanceCents + 990);
+    for (const path of ['/api/payments', '/api/payments/old-top-up/confirm']) {
+      const response = await call(path, { method: 'POST', body: JSON.stringify({ sessionId: session.sessionId, packId: 'light' }) });
+      assert.equal(response.status, 403);
+      assert.equal(response.payload.error.code, 'PAYMENT_DISABLED');
+    }
+    const persisted = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
+    assert.deepEqual(persisted.payments, [payment]);
+    assert.equal(persisted.sessions[0].balanceCents, 17);
   });
 });
 
@@ -393,12 +519,22 @@ test('非法图片内容被拒绝', async () => {
 });
 
 test('静态页面可访问且不暴露目录穿越', async () => {
+  const { buildFrontend } = await import('../scripts/build-frontend.mjs');
+  await buildFrontend();
   await withServer({}, async ({ call }) => {
     const page = await call('/');
     assert.equal(page.status, 200);
-    assert.match(page.payload, /穿搭试穿间|搭配试穿间/);
+    assert.match(page.payload, /<title>照花(?: · [^<]+)?<\/title>/);
+    const favicon = page.payload.match(/<link\b[^>]*rel="icon"[^>]*href="([^"]+)"/)?.[1];
+    assert.match(favicon ?? '', /^\/icon\.svg(?:\?[\w=.-]+)?$/);
+    const icon = await call(favicon);
+    assert.equal(icon.status, 200);
+    assert.equal(icon.headers.get('content-type'), 'image/svg+xml');
+    assert.match(icon.payload, /<title>照花<\/title>/);
     assert.equal(page.headers.get('cache-control'), 'no-cache');
-    for (const path of ['/app.js', '/views/wardrobe.js', '/style.css']) {
+    const entry = page.payload.match(/<script\b[^>]*type="module"[^>]*src="([^"]+)"/i)?.[1];
+    assert.equal(entry, '/dist/app.js');
+    for (const path of [entry, '/style.css']) {
       const asset = await call(path);
       assert.equal(asset.status, 200);
       assert.equal(asset.headers.get('cache-control'), 'no-cache', `${path} must revalidate to avoid mixing frontend versions`);
@@ -481,22 +617,41 @@ test('结果图需要有效票据，缺票据或票据错误都拒绝', async ()
   });
 });
 
-test('重启后 pending 订单被对账为失败并退回余额', async () => {  const dir = await mkdtemp(join(tmpdir(), 'tryon-restart-'));
+test('两次重启处理混合历史账目，缺失会话单保留待核对金额，其余用户只入账一次', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'tryon-restart-'));
   try {
     const catalogFile = join(dir, 'catalog.json');
     await writeFile(catalogFile, JSON.stringify({ products: [] }), 'utf8');
-    const store = createStore({ dir, catalogFile });
-    await store.ready();
-    const session = await store.getOrCreateSession('device-restart');
-    const before = session.balanceCents;
-    await store.addBalance(session.id, -690);
-    await store.createOrder({ sessionId: session.id, productName: '红底白色小花短袖衬衫', priceCents: 690, status: 'pending' });
-    const tryon = createTryonService({ store, env: {}, fetchImpl: async () => jsonResponse({}), resultsDir: join(dir, 'results') });
-    const reconciled = await tryon.reconcileInterruptedOrders();
-    assert.equal(reconciled, 1);
-    const after = store.getSession(session.id).balanceCents;
-    assert.equal(after, before, '中断订单必须全额退回');
-    assert.equal(store.listOrders(session.id)[0].status, 'failed');
+    const paid = { id: 'old-pending', sessionId: 'history', status: 'pending', priceCents: 690 };
+    const free = { id: 'free-pending', sessionId: 'history', status: 'pending', priceCents: 0 };
+    const complete = { id: 'old-success', sessionId: 'history', status: 'success', priceCents: 290 };
+    const orphan = { id: 'missing-session-order', sessionId: 'evicted', status: 'pending', priceCents: 390 };
+    await writeFile(join(dir, 'state.json'), JSON.stringify({ sessions: [{ id: 'history', balanceCents: 42 }], orders: [orphan, paid, free, complete] }));
+    for (const expected of [3, 0]) {
+      const store = createStore({ dir, catalogFile });
+      await store.ready();
+      const tryon = createTryonService({ store, env: {}, resultsDir: join(dir, 'results') });
+      assert.equal(await tryon.reconcileInterruptedOrders(), expected);
+      const persisted = JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
+      assert.deepEqual(persisted.sessions, [{ id: 'history', balanceCents: 732 }]);
+      const unresolved = persisted.orders.find(({ id }) => id === orphan.id);
+      assert.equal(unresolved.status, 'failed');
+      assert.equal(unresolved.sessionId, 'evicted');
+      assert.equal(unresolved.priceCents, 390);
+      assert.deepEqual(unresolved.refund, { status: 'needs_review', amountCents: 390 });
+      assert.doesNotMatch(unresolved.errorMessage, /已退回/);
+    }
+    const reopened = createStore({ dir, catalogFile });
+    await reopened.ready();
+    assert.equal(reopened.getSession('history').balanceCents, 732);
+    assert.equal(reopened.getOrder('old-pending').status, 'failed');
+    assert.match(reopened.getOrder('old-pending').errorMessage, /退回/);
+    assert.deepEqual(reopened.getOrder('old-pending').refund, { status: 'credited', amountCents: 690 });
+    assert.equal(reopened.getOrder('free-pending').status, 'failed');
+    assert.doesNotMatch(reopened.getOrder('free-pending').errorMessage, /费|退回|余额/);
+    assert.deepEqual(reopened.getOrder('old-success'), complete);
+    assert.equal((await reopened.getOrCreateSession('evicted')).balanceCents, 0);
+    assert.equal(reopened.getSession('evicted'), null);
   } finally {
     // 衣橱/结果的写入队列可能在关闭后仍在落盘，清理失败不应让用例假红。
     await rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -608,7 +763,7 @@ test('多件搭配（top+bottom）下单成功且参考图按 top→bottom 排�
     });
     assert.equal(created.status, 201);
     assert.deepEqual(created.payload.order.slots, ['top', 'bottom']);
-    assert.equal(created.payload.priceCents, 690);
+    assert.equal(created.payload.priceCents, 0);
     const job = await waitForJob(call, created.payload.jobId);
     assert.equal(job.status, 'success');
     assert.equal(record.length, 1);
@@ -650,6 +805,7 @@ test('棚拍模式保存固定背景与姿势，并把重拍方向写入提示�
     assert.equal(order.size, '1024x1536');
     assert.equal(record[0].size, '1024x1536');
     assert.match(record[0].prompt, /PHOTOGRAPHY MODE: STUDIO/);
+    assert.doesNotMatch(record[0].prompt, /BODY PROPORTIONS|7\.16 heads|y=1360/);
     assert.match(record[0].prompt, /one hand resting behind the head/i);
     assert.equal(record[0].reference_images.length, 4, '人物 + 外套 + 下装 + PoseWear 姿势图');
     assert.match(record[0].reference_images[3], /^data:image\/png;base64,/, '姿势图固定放在参考图末尾');
@@ -659,30 +815,91 @@ test('棚拍模式保存固定背景与姿势，并把重拍方向写入提示�
   });
 });
 
-test('旧订单详情与列表都把缺失的棚拍字段归一化', async () => {
-  await withServer({}, async ({ call, store }) => {
-    const session = await createSession(call);
-    const order = await store.createOrder({
-      sessionId: session.sessionId,
-      productName: '旧版试穿',
-      model: 'codex/gpt-image-2.5',
-      tier: 'standard',
-      slots: ['top'],
-      pieces: [{ slot: 'top', layer: 'auto', garmentType: '衬衫', name: '旧衬衫' }],
-      priceCents: 690,
+test('内置棚拍 multipart 按全身、定妆 PNG、有序衣物、指定骨架发送，提示词与图号一致', async () => {
+  const record = [];
+  const png = await readFile(new URL('../public/model/posewear-01/model-front.png', import.meta.url));
+  const person = `data:image/png;base64,${png.toString('base64')}`;
+  const shirt = await readFile(new URL('../public/catalog/shirt-floral.jpg', import.meta.url));
+  const jeans = await readFile(new URL('../public/catalog/jeans-black.jpg', import.meta.url));
+  const uploadedJeans = `data:image/jpeg;base64,${jeans.toString('base64')}`;
+  const pose = await readFile(new URL('../public/posewear/P017.png', import.meta.url));
+  await withServer({ record }, async ({ call, store }) => {
+    const { sessionId } = await createSession(call);
+    const created = await call('/api/orders', {
+      method: 'POST', body: JSON.stringify({ sessionId, person, model: 'codex/gpt-image-2.5',
+        photographyMode: 'studio', posePreset: 'over-shoulder', pieces: [
+          { slot: 'bottom', source: { kind: 'upload', image: uploadedJeans } },
+          { slot: 'top', source: { kind: 'product', productId: 'shirt-floral' } },
+        ] }),
     });
-    const detail = await call(`/api/orders/${order.id}`, { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(created.status, 201, JSON.stringify(created.payload));
+    assert.equal((await waitForJob(call, created.payload.jobId)).status, 'success');
+    const [{ reference_images: images, prompt }] = record;
+    assert.equal(images.length, 5);
+    assert.equal(images[0] === person, true);
+    assert.match(images[1].slice(0, 30), /^data:image\/png;base64,/);
+    const portrait = await readFile(new URL('../public/model/posewear-01/face-studio-makeup.png', import.meta.url));
+    assert.equal(hash('sha256', Buffer.from(images[1].split(',')[1], 'base64')), hash('sha256', portrait));
+    assert.match(prompt, /facial identity and finished makeup (?:in|from) (?:reference )?image 2/i);
+    assert.equal(images[2] === `data:image/jpeg;base64,${shirt.toString('base64')}`, true);
+    assert.equal(images[3] === uploadedJeans, true);
+    assert.equal(images[4] === `data:image/png;base64,${pose.toString('base64')}`, true);
+    assert.match(prompt, /reference image 3 \(top/i);
+    assert.match(prompt, /reference image 4 \(bottom/i);
+    assert.match(prompt, /reference image 5 supplies only the body pose/i);
+    assert.match(prompt, /BODY PROPORTIONS/);
+    assert.doesNotMatch(JSON.stringify(store.getOrder(created.payload.orderId)), /base64,/);
+  });
+});
+
+test('普通试穿与显式自传同一默认图，都不发送内置脸；不能伪报内置人物', async () => {
+  const record = [];
+  const png = await readFile(new URL('../public/model/posewear-01/model-front.png', import.meta.url));
+  const person = `data:image/png;base64,${png.toString('base64')}`;
+  await withServer({ record, env: { DEMO_MODE: '1' } }, async ({ call, store }) => {
+    const { sessionId } = await createSession(call);
+    const order = (overrides) => call('/api/orders', { method: 'POST', body: JSON.stringify({
+      sessionId, person, model: 'codex/gpt-image-2.5', pieces: [{ slot: 'top', source: { kind: 'upload', image: PERSON } }], ...overrides,
+    }) });
+    for (const [photographyMode, personSource, count] of [['preserve', 'builtin', 2], ['studio', 'upload', 3]]) {
+      const result = await order({ photographyMode, personSource, faceImage: PERSON, posewearBody: true });
+      assert.equal(result.status, 201);
+      assert.equal((await waitForJob(call, result.payload.jobId)).status, 'success');
+      const sent = record.at(-1);
+      assert.equal(sent.reference_images.length, count);
+      assert.equal(sent.reference_images[1], PERSON);
+      assert.doesNotMatch(sent.prompt, /^BODY PROPORTIONS \(|studio makeup portrait|finished makeup from reference image 2/im);
+    }
+    const before = store.getSession(sessionId).balanceCents;
+    for (const overrides of [{ personSource: 'builtin', person: PERSON }, { personSource: 'unknown' }]) {
+      const result = await order({ photographyMode: 'studio', ...overrides });
+      assert.equal(result.status, 400);
+      assert.equal(result.payload.error.field, 'personSource');
+    }
+    assert.equal(store.getSession(sessionId).balanceCents, before);
+    assert.equal(record.length, 2);
+  });
+});
+
+test('旧订单详情与列表都把缺失的棚拍字段归一化', async () => {
+  const historicOrder = { id: 'legacy', sessionId: 'owner', productName: '旧版试穿', status: 'success', priceCents: 690 };
+  const savedState = { sessions: [{ id: 'owner', deviceId: 'device-test', balanceCents: 0 }], orders: [historicOrder] };
+  await withServer({ savedState }, async ({ call }) => {
+    const session = await createSession(call);
+    const detail = await call(`/api/orders/${historicOrder.id}`, { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(detail.payload.order.priceCents, 690);
     assert.equal(detail.payload.order.photographyMode, 'preserve');
     assert.equal(detail.payload.order.studioPreset, null);
     assert.equal(detail.payload.order.posePreset, null);
     const list = await call('/api/orders', { headers: { 'x-session-id': session.sessionId } });
+    assert.equal(list.payload.orders[0].priceCents, 690);
     assert.equal(list.payload.orders[0].photographyMode, 'preserve');
     assert.equal(list.payload.orders[0].studioPreset, null);
     assert.equal(list.payload.orders[0].posePreset, null);
   });
 });
 
-test('未知棚拍模板或姿势在扣费和建单前拒绝', async () => {
+test('未知棚拍模板或姿势在建单前拒绝', async () => {
   for (const [patch, field] of [
     [{ studioPreset: 'unknown-studio' }, 'studioPreset'],
     [{ posePreset: 'unknown-pose' }, 'posePreset'],
@@ -802,7 +1019,7 @@ test('演示模式下单不扣费、不校验余额，充值返回 PAYMENT_DISAB
     const config = await call('/api/config');
     assert.equal(config.payload.demoMode, true);
     const session = await createSession(call);
-    await store.addBalance(session.sessionId, -session.balanceCents);
+    assert.equal(session.balanceCents, 0);
     const created = await call('/api/orders', {
       method: 'POST',
       body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: 'codex/gpt-image-2.5', tier: 'standard', person: PERSON }),
@@ -825,7 +1042,7 @@ test('GET/PATCH /api/settings 读写默认模型，下单未传 model 时使用�
     const initial = await call('/api/settings');
     assert.equal(initial.status, 200);
     assert.equal(initial.payload.model, 'codex/gpt-image-2.5');
-    assert.deepEqual(initial.payload.models.map(({ id }) => id), [...MODELS, WORKFLOW_ID]);
+    assert.deepEqual(initial.payload.models.map(({ id }) => id), MODELS);
     assert.equal(initial.payload.demoMode, false);
     assert.equal(initial.payload.sources.jd, true);
     assert.equal(initial.payload.sources.douyin, true);
@@ -947,7 +1164,7 @@ test('两件配饰与正好 5 件单品是允许的上限', async () => {
   });
 });
 
-test('下单中途失败会撤任务、订单置失败并全额退款', async () => {
+test('下单中途失败会撤任务并记录失败，余额保持原值', async () => {
   const record = [];
   await withServer({ record }, async ({ call, store }) => {
     const session = await createSession(call);
@@ -969,303 +1186,11 @@ test('下单中途失败会撤任务、订单置失败并全额退款', async ()
     } finally {
       store.updateOrder = original;
     }
-    assert.equal(store.getSession(session.sessionId).balanceCents, before, '失败必须全额退回');
+    assert.equal(store.getSession(session.sessionId).balanceCents, before);
     const orders = store.listOrders(session.sessionId);
     assert.equal(orders.length, 1);
     assert.equal(orders[0].status, 'failed');
     await new Promise((resolve) => setTimeout(resolve, 120));
     assert.equal(record.length, 0, '撤掉的任务不得再调用上游');
-  });
-});
-
-test('工作流未配置时仍可选择模型，状态接口明确返回未就绪', async () => {
-  await withServer({}, async ({ call }) => {
-    const status = await call('/api/workflows/status');
-    assert.equal(status.status, 200);
-    assert.equal(status.payload.configured, false);
-    assert.equal(status.payload.ready, false);
-    const patched = await call('/api/settings', { method: 'PATCH', body: JSON.stringify({ model: WORKFLOW_ID }) });
-    assert.equal(patched.status, 200);
-    const settings = await call('/api/settings');
-    assert.equal(settings.payload.model, WORKFLOW_ID);
-    const workflow = settings.payload.models.find(({ id }) => id === WORKFLOW_ID);
-    assert.equal(workflow.tiers[0].id, 'workflow');
-    assert.equal(workflow.tiers[0].priceCents, 0);
-  });
-});
-
-test('工作流没地址时在占位扣费建单之前返回 503', async () => {
-  await withServer({}, async ({ call, store, tryon }) => {
-    const session = await createSession(call);
-    let reservations = 0;
-    let balanceChanges = 0;
-    const reserve = tryon.reserve;
-    const addBalance = store.addBalance;
-    tryon.reserve = (...args) => { reservations += 1; return reserve(...args); };
-    store.addBalance = (...args) => { balanceChanges += 1; return addBalance(...args); };
-    try {
-      const response = await call('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: WORKFLOW_ID, tier: 'workflow', person: PERSON }),
-      });
-      assert.equal(response.status, 503);
-      assert.equal(response.payload.error.code, 'WORKFLOW_UNAVAILABLE');
-      assert.equal(reservations, 0);
-      assert.equal(balanceChanges, 0);
-      assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-      assert.deepEqual(store.listOrders(session.sessionId), []);
-      assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
-    } finally {
-      tryon.reserve = reserve;
-      store.addBalance = addBalance;
-    }
-  });
-});
-
-test('工作流超过三件服装返回 400 WORKFLOW_PIECES', async () => {
-  await withServer({}, async ({ call, store, tryon }) => {
-    const session = await createSession(call);
-    const pieces = ['top', 'outer', 'bottom', 'shoes'].map((slot) => ({ slot, garmentType: slot, source: { kind: 'upload', image: PERSON } }));
-    const response = await call('/api/orders', {
-      method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, model: WORKFLOW_ID, tier: 'workflow', person: PERSON, pieces }),
-    });
-    assert.equal(response.status, 400);
-    assert.equal(response.payload.error.code, 'WORKFLOW_PIECES');
-    assert.equal(response.payload.error.field, 'pieces');
-    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-    assert.deepEqual(store.listOrders(session.sessionId), []);
-    assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
-  });
-});
-
-test('工作流订单经上传、提交、历史和结果接口成功，零扣费且层级与图序一致', async () => {
-  const record = { uploads: [], prompts: [], paths: [] };
-  const image = (tag) => `data:image/png;base64,${Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(tag)]).toString('base64')}`;
-  const top = image('top');
-  const outer = image('outer');
-  const bottom = image('bottom');
-  await withServer({ env: { COMFYUI_BASE_URL: 'http://comfy.test' }, fetchImpl: makeWorkflowFetch({ record }) }, async ({ call, store, dir, base }) => {
-    const status = await call('/api/workflows/status');
-    assert.equal(status.status, 200);
-    assert.equal(status.payload.configured, true);
-    assert.equal(status.payload.ready, true);
-    const session = await createSession(call);
-    const created = await call('/api/orders', {
-      method: 'POST',
-      body: JSON.stringify({
-        sessionId: session.sessionId, model: WORKFLOW_ID, tier: 'workflow', person: PERSON,
-        pieces: [
-          { slot: 'top', layer: 'outer', garmentType: '衬衫', source: { kind: 'upload', image: top } },
-          { slot: 'bottom', layer: 'middle', garmentType: '百褶裙', source: { kind: 'upload', image: bottom } },
-          { slot: 'outer', layer: 'inner', garmentType: '夹克', source: { kind: 'upload', image: outer } },
-        ],
-      }),
-    });
-    assert.equal(created.status, 201);
-    assert.equal(created.payload.priceCents, 0);
-    assert.equal(created.payload.balanceCents, session.balanceCents);
-    const job = await waitForJob(call, created.payload.jobId);
-    assert.equal(job.status, 'success');
-    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-    assert.deepEqual(record.uploads, [PERSON, outer, bottom, top]);
-    assert.equal(record.prompts.length, 1);
-    const graph = record.prompts[0];
-    assert.equal(graph.person.inputs.image, 'upload-1.png');
-    for (let index = 1; index <= 3; index += 1) assert.equal(graph[`garment_${index}`].inputs.image, `upload-${index + 1}.png`);
-    const expectedPieces = [['outer', 'inner'], ['bottom', 'middle'], ['top', 'outer']];
-    const persisted = store.getOrder(created.payload.orderId);
-    assert.deepEqual(persisted.pieces.map(({ slot, layer }) => [slot, layer]), expectedPieces);
-    for (const [index, [slot, layer]] of expectedPieces.entries()) {
-      assert.ok(persisted.prompt.includes(`reference image ${index + 2} (${slot}:`));
-      assert.ok(graph.positive.inputs.prompt.includes(`garment ${index + 1} in the bottom row (numbered from the left) (${slot}:`));
-      assert.match(graph.positive.inputs.prompt, new RegExp(`${slot}:.*${layer} layer`));
-    }
-    const detail = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
-    assert.equal(detail.payload.order.hasResult, true);
-    assert.deepEqual(detail.payload.order.pieces.map(({ slot, layer }) => [slot, layer]), expectedPieces);
-    const result = await fetch(`${base}/api/results/${detail.payload.order.resultFile}?k=${detail.payload.order.resultToken}`);
-    assert.equal(result.status, 200);
-    assert.equal(result.headers.get('content-type'), 'image/png');
-    assert.deepEqual(Buffer.from(await result.arrayBuffer()), Buffer.from(PNG, 'base64'));
-    const raw = await readFile(join(dir, 'state.json'), 'utf8');
-    assert.doesNotMatch(raw, /base64|"person"|"dataUrl"|"referenceImages"/);
-    const diskOrder = JSON.parse(raw).orders.find(({ id }) => id === created.payload.orderId);
-    assert.deepEqual(diskOrder.pieces.map(({ slot, layer }) => [slot, layer]), expectedPieces);
-    assert.equal(record.paths.filter((path) => path === '/upload/image').length, 4);
-    assert.ok(record.paths.includes('/prompt'));
-    assert.ok(record.paths.includes('/history/workflow-test'));
-    assert.ok(record.paths.includes('/view'));
-  });
-});
-
-function makeIdmFetch({ record = [], ready = true, failStage = 0 } = {}) {
-  const imageFetch = makeFetch();
-  return async (url, options) => {
-    const target = new URL(url);
-    if (target.origin !== 'http://idm.test') return imageFetch(url, options);
-    if (target.pathname === '/health') return jsonResponse({ ok: true, pipeline: ready, engine: 'idm-vton' });
-    assert.equal(target.pathname, '/tryon');
-    const body = JSON.parse(options.body);
-    record.push(body);
-    if (record.length === failStage) return new Response('private server detail', { status: 500 });
-    return jsonResponse({ image: PNG, seconds: 1 });
-  };
-}
-
-test('IDM 目录与设置持久化使用原接口，健康检查不出图且不回服务地址', async () => {
-  const record = [];
-  await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ record }) }, async ({ call, store }) => {
-    const config = await call('/api/config');
-    const model = config.payload.models.find(({ id }) => id === IDM_ID);
-    assert.ok(model);
-    assert.equal(model.tiers[0].id, 'idm');
-    assert.equal(model.tiers[0].priceCents, 0);
-    assert.equal(model.tiers[0].size, '768x1024');
-    const status = await call('/api/workflows/idm/status');
-    assert.equal(status.status, 200);
-    assert.equal(status.payload.ready, true);
-    assert.doesNotMatch(JSON.stringify(status.payload), /idm.test|baseUrl|token/);
-    assert.equal(record.length, 0);
-    const patched = await call('/api/settings', { method: 'PATCH', body: JSON.stringify({ model: IDM_ID }) });
-    assert.equal(patched.status, 200);
-    assert.equal(store.getSettings().model, IDM_ID);
-    assert.equal((await call('/api/settings')).payload.model, IDM_ID);
-  });
-});
-
-test('IDM 未配置时只读状态明确未就绪，目录不宣称已连接', async () => {
-  await withServer({}, async ({ call }) => {
-    const status = await call('/api/workflows/idm/status');
-    assert.equal(status.status, 200);
-    assert.equal(status.payload.configured, false);
-    assert.equal(status.payload.ready, false);
-    assert.equal((await call('/api/config')).payload.models.some(({ id }) => id === IDM_ID), false);
-  });
-});
-
-test('IDM 订单链传递有序单品元数据及纯base64，保存原长提示词与真实结果票据', async () => {
-  const record = [];
-  const tagged = tag => `data:image/png;base64,${Buffer.concat([Buffer.from(PNG, 'base64'), Buffer.from(tag)]).toString('base64')}`;
-  const shirt = tagged('shirt');
-  const jeans = tagged('jeans');
-  await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ record }) }, async ({ call, store, base, dir }) => {
-    const session = await createSession(call);
-    const created = await call('/api/orders', { method: 'POST', body: JSON.stringify({
-      sessionId: session.sessionId, model: IDM_ID, tier: 'idm', person: PERSON, prompt: '保持自然光线',
-      pieces: [
-        { slot: 'bottom', layer: 'middle', garmentType: 'jeans', source: { kind: 'upload', image: jeans } },
-        { slot: 'top', layer: 'inner', garmentType: 'shirt', source: { kind: 'upload', image: shirt } },
-      ],
-    }) });
-    assert.equal(created.status, 201);
-    assert.equal(created.payload.priceCents, 0);
-    const job = await waitForJob(call, created.payload.jobId);
-    assert.equal(job.status, 'success', JSON.stringify(job.error));
-    assert.equal(record.length, 2);
-    assert.deepEqual(record.map(item => item.category), ['upper_body', 'lower_body']);
-    assert.equal(record[0].person, PNG);
-    assert.equal(record[0].garment, shirt.split(',')[1]);
-    assert.equal(record[1].person, PNG);
-    assert.equal(record[1].garment, jeans.split(',')[1]);
-    assert.match(record[0].description, /shirt/);
-    const order = store.getOrder(created.payload.orderId);
-    assert.deepEqual(order.pieces.map(({ slot, layer }) => [slot, layer]), [['top', 'inner'], ['bottom', 'middle']]);
-    assert.match(order.prompt, /reference image 2 \(top:/);
-    assert.match(order.prompt, /保持自然光线/);
-    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-    const detail = await call(`/api/orders/${order.id}`, { headers: { 'x-session-id': session.sessionId } });
-    assert.equal(detail.payload.order.hasResult, true);
-    const result = await fetch(`${base}/api/results/${detail.payload.order.resultFile}?k=${detail.payload.order.resultToken}`);
-    assert.equal(result.status, 200);
-    assert.deepEqual(Buffer.from(await result.arrayBuffer()), Buffer.from(PNG, 'base64'));
-    assert.doesNotMatch(await readFile(join(dir, 'state.json'), 'utf8'), /base64|referenceImages|dataUrl/);
-  });
-});
-
-test('IDM 鞋类或健康失败在占位与建单前结束，不扣费不上传', async () => {
-  for (const [ready, slots, code] of [[true, ['top', 'shoes'], 'IDM_SLOT'], [false, ['top'], 'WORKFLOW_UNAVAILABLE']]) {
-    const record = [];
-    await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ ready, record }) }, async ({ call, store, tryon }) => {
-      const session = await createSession(call);
-      const result = await call('/api/orders', { method: 'POST', body: JSON.stringify({
-        sessionId: session.sessionId, model: IDM_ID, person: PERSON,
-        pieces: slots.map(slot => ({ slot, garmentType: slot, source: { kind: 'upload', image: PERSON } })),
-      }) });
-      assert.equal(result.payload.error.code, code);
-      assert.deepEqual(store.listOrders(session.sessionId), []);
-      assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
-      assert.equal(record.length, 0);
-      assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-    });
-  }
-});
-
-test('IDM 与 ComfyUI 拼图工作流都不接受无法执行的无影棚模式', async () => {
-  const record = [];
-  for (const model of [IDM_ID, WORKFLOW_ID]) {
-    const env = model === IDM_ID ? { IDM_BASE_URL: 'http://idm.test' } : { COMFYUI_BASE_URL: 'http://comfy.test' };
-    const fetchImpl = model === IDM_ID ? makeIdmFetch({ record }) : makeWorkflowFetch();
-    await withServer({ env, fetchImpl }, async ({ call, store, tryon }) => {
-      const session = await createSession(call);
-      const result = await call('/api/orders', { method: 'POST', body: JSON.stringify({
-        sessionId: session.sessionId,
-        model,
-        person: PERSON,
-        photographyMode: 'studio',
-        studioPreset: 'clean-white-seamless',
-        posePreset: 'contrapposto',
-        pieces: [{ slot: 'top', garmentType: '衬衫', source: { kind: 'upload', image: PERSON } }],
-      }) });
-      assert.equal(result.status, 400);
-      assert.equal(result.payload.error.code, 'MODEL_MODE_UNSUPPORTED');
-      assert.equal(result.payload.error.field, 'photographyMode');
-      assert.deepEqual(store.listOrders(session.sessionId), []);
-      assert.deepEqual(tryon.jobsForSession(session.sessionId), []);
-      assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-    });
-  }
-  assert.equal(record.length, 0);
-});
-
-test('IDM 第二阶段失败使整单失败，不把第一阶段半成品存为完成', async () => {
-  const record = [];
-  await withServer({ env: { IDM_BASE_URL: 'http://idm.test' }, fetchImpl: makeIdmFetch({ failStage: 2, record }) }, async ({ call, store }) => {
-    const session = await createSession(call);
-    const created = await call('/api/orders', { method: 'POST', body: JSON.stringify({
-      sessionId: session.sessionId, model: IDM_ID, person: PERSON,
-      pieces: ['top', 'bottom'].map(slot => ({ slot, garmentType: slot, source: { kind: 'upload', image: PERSON } })),
-    }) });
-    assert.equal(created.status, 201);
-    const job = await waitForJob(call, created.payload.jobId);
-    assert.equal(job.status, 'failed');
-    assert.equal(job.error.code, 'WORKFLOW_FAILED');
-    const order = store.getOrder(created.payload.orderId);
-    assert.equal(order.status, 'failed');
-    assert.ok(!order.resultFile);
-    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-    assert.equal(record.length, 2);
-  });
-});
-
-test('工作流上游执行错误使任务订单失败，不扣费也不伪造结果', async () => {
-  const record = { uploads: [], prompts: [], paths: [] };
-  await withServer({ env: { COMFYUI_BASE_URL: 'http://comfy.test' }, fetchImpl: makeWorkflowFetch({ fail: true, record }) }, async ({ call, store }) => {
-    const session = await createSession(call);
-    const created = await call('/api/orders', {
-      method: 'POST',
-      body: JSON.stringify({ sessionId: session.sessionId, productId: 'shirt-floral', model: WORKFLOW_ID, tier: 'workflow', person: PERSON }),
-    });
-    assert.equal(created.status, 201);
-    const job = await waitForJob(call, created.payload.jobId);
-    assert.equal(job.status, 'failed');
-    assert.equal(job.error.code, 'WORKFLOW_FAILED');
-    assert.equal(store.getSession(session.sessionId).balanceCents, session.balanceCents);
-    const detail = await call(`/api/orders/${created.payload.orderId}`, { headers: { 'x-session-id': session.sessionId } });
-    assert.equal(detail.payload.order.status, 'failed');
-    assert.equal(detail.payload.order.errorCode, 'WORKFLOW_FAILED');
-    assert.equal(detail.payload.order.hasResult, false);
-    assert.equal(detail.payload.order.resultToken, null);
-    assert.equal(record.paths.includes('/view'), false);
   });
 });

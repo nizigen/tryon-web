@@ -3,7 +3,7 @@ import { mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { HttpError } from './errors.mjs';
-import { generateTryon } from './generation.mjs';
+import { generateImage } from './imageapi.mjs';
 
 const RESULT_TTL_MS = 24 * 60 * 60 * 1000;
 const JOB_RETENTION_MS = 30 * 60 * 1000;
@@ -18,7 +18,6 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
     return [...jobs.values()].find((job) => job.sessionId === sessionId && (job.status === 'queued' || job.status === 'running')) ?? null;
   }
 
-  /** 先占位再扣费：占位成功后才允许扣费与建单，避免并发窗口里吞钱。 */
   function reserve(sessionId) {
     if (activeJobFor(sessionId) || reservations.has(sessionId)) {
       throw new HttpError(409, 'BUSY', '已有试穿任务正在进行，请等待完成');
@@ -40,20 +39,16 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
 
   async function settleFailure(job, error) {
     const known = error instanceof HttpError;
-    const order = store.getOrder(job.orderId);
-    // 先完成退款与订单落库，再把任务置为失败，避免外部读到“失败”但额度未退回。
-    if (order) {
-      await store.updateOrder(order.id, {
-        status: 'failed',
-        finishedAt: new Date().toISOString(),
-        errorCode: known ? error.code : 'INTERNAL_ERROR',
-        errorMessage: known ? error.message : '试穿生成失败，请稍后重试',
-      });
-      if (order.priceCents > 0) await store.addBalance(order.sessionId, order.priceCents);
+    const detail = { code: known ? error.code : 'INTERNAL_ERROR', message: known ? error.message : '试穿生成失败，请稍后重试' };
+    try {
+      await store.failOrder(job.orderId, { errorCode: detail.code, errorMessage: detail.message });
+      job.error = detail;
+    } catch (storageError) {
+      logger.error(`tryon settlement failed: ${storageError.message}`);
+      job.error = { code: 'ORDER_STATE_UNAVAILABLE', message: '试穿已中断，订单状态暂时无法保存' };
     }
     job.status = 'failed';
     job.stage = 'failed';
-    job.error = { code: known ? error.code : 'INTERNAL_ERROR', message: known ? error.message : '试穿生成失败，请稍后重试' };
     job.updatedAt = new Date().toISOString();
   }
 
@@ -62,14 +57,13 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
     job.stage = 'generating';
     job.updatedAt = new Date().toISOString();
     try {
-      const { model, prompt, person, garment, referenceImages, pieces, quality, size } = job.payload;
+      const { model, prompt, person, garment, referenceImages, quality, size } = job.payload;
       // referenceImages 为多件穿搭提供的完整参考图数组；缺省时退回旧单件 [person, garment]。
       const images = Array.isArray(referenceImages) ? referenceImages : [person, garment];
-      const { mimeType, buffer } = await generateTryon({
+      const { mimeType, buffer } = await generateImage({
         model,
         prompt,
         referenceImages: images,
-        pieces,
         quality,
         size,
       }, env, fetchImpl, { timeoutMs });
@@ -95,8 +89,6 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
       running += 1;
       void runJob(job).catch((error) => {
         logger.error(`tryon job crashed: ${error.message}`);
-        running -= 1;
-        pump();
       });
     }
   }
@@ -106,6 +98,13 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
     for (const [id, job] of jobs) {
       if ((job.status === 'success' || job.status === 'failed') && new Date(job.updatedAt).getTime() < cutoff) jobs.delete(id);
     }
+  }
+
+  function startJob(jobId) {
+    const job = jobs.get(jobId);
+    if (!job || job.status !== 'queued' || pending.includes(job)) return;
+    pending.push(job);
+    pump();
   }
 
   return {
@@ -128,20 +127,12 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
       };
       jobs.set(job.id, job);
       reservations.delete(sessionId);
-      pending.push(job);
       pruneJobs();
-      // start=false 时先排队不启动：调用方还要把 jobId 落库，落库成功后再 start。
-      // 这样「订单已建但 jobId 没写进订单」的窗口里不会已经开始消耗上游额度。
-      if (start) pump();
+      if (start) startJob(job.id);
       return job;
     },
 
-    /** 启动一个排队中的任务；已经启动或已完成则什么也不做。 */
-    start(jobId) {
-      const job = jobs.get(jobId);
-      if (!job || job.status !== 'queued') return;
-      pump();
-    },
+    start: startJob,
 
     /** 撤销一个尚未开始的任务（用于下单过程中途失败的回滚）。 */
     cancel(jobId, reason = 'CANCELLED') {
@@ -165,17 +156,13 @@ export function createTryonService({ store, env, fetchImpl, resultsDir, timeoutM
       return [...jobs.values()].filter((job) => job.sessionId === sessionId);
     },
 
-    /** 进程重启后没有内存任务，磁盘上的 pending 订单需要人工对账为失败并退费。 */
     async reconcileInterruptedOrders() {
       const stale = store.listAllOrders().filter((order) => order.status === 'pending');
       for (const order of stale) {
-        await store.updateOrder(order.id, {
-          status: 'failed',
-          finishedAt: new Date().toISOString(),
+        await store.failOrder(order.id, {
           errorCode: 'INTERRUPTED',
-          errorMessage: '服务重启导致本次试穿中断，费用已退回余额',
+          errorMessage: '服务重启导致本次试穿中断',
         });
-        if (order.priceCents > 0) await store.addBalance(order.sessionId, order.priceCents);
       }
       return stale.length;
     },

@@ -1,5 +1,97 @@
 # findings — 研究、决策与证据
 
+## W15 · 继承原版布局，不移植预览
+
+- 基线是 `HEAD` `c68d136` 下的 `public/index.html`、`public/app.js` 与正式 React 组件的真实行为。用户已指定这个基线并要求新增正式首页，不再开一轮 Huashu 选稿，W13/W14 不作为生产视觉或行为来源。
+- Design Reference 按 Obsidian `note` 的设计参考索引和路由查源。[Studio Nicholson 首页](https://www.studionicholson.com/) 实看关闭订阅浮层后的画面：窄站头之下是拼合的两幅摄影，照片直接占据色场、不套装饰卡（`artifacts/shots/w15-ref-nicholson-home.png`）。[LEMAIRE 首页](https://www.lemaire.fr/) 实看「Familiar and Surreal」：站头与照片分在两个平面，一张材质特写配一个入口。只取摄影尺度、字图层级和入口克制，不复制原图、字标、文案或电商交互。Indyx 只见空帧，未采信。
+- Taste 种子 `15112726`：首页采用 `split-stage` 的一侧文字、一侧摄影，不采用遮字混合模式或固定照片动效；应用沿用 `achromatic-ledger` 的墨色操作和实物优先，不用它的通用侧栏或图表。照花自己的 R5 全身照撑起首页大图；下方只用现有目录生成图说明可搭哪些单品。不展示用户订单结果或虚构试衣对比。
+- 选适配：沿用 React 19.2.7、esbuild 0.28.2、原 hash 路由、`useStudioDraft`、同源版本化 `DEFAULT_PERSON_URL` 和原生弹窗。首页只读静态素材；工具 bootstrap 首次进入才执行，草稿仍只在 React 内存。无需新路由库、API、字体或权限。用 `test/frontend.test.mjs` 的隔离真实后端和既有 Chromium 覆盖导航、会话边界、草稿与订单；OpenCLI 复验正式实例。
+
+## W14 · 只看新参考和照花原素材（2026-11-27）
+
+Obsidian `vault=note` 经 `app.vault.adapter.getBasePath()` 确认为 `C:\Note\note`，读取设计参考 README 和路由；定向搜索命中 Mobbin、Refero。以下是另行通过 OpenCLI 查看并目验的官方产品画面，不是目录收录或现站截图。未核验第三方资产再利用授权；不复制素材、文案、代码、字体或标记。
+
+| 实际观察 | 借鉴 | 排除 |
+| --- | --- | --- |
+| [Stylebook · Features](https://www.stylebookapp.com/features.html) 的 Closet / Looks 屏，以及[用真实衣橱建库](https://www.stylebookapp.com/stories/virtual_closet.html) 里的 All Items | 同一类别衣物在连续底色上并排，轮廓本身是主要内容；看衣物与看搭配不是同一画布 | 不照搬 iOS 控件、手机边框和促销首屏 |
+| [Whering · How it works](https://www.whering.co/#how-it-works) 的衣橱截图 | 衣物类型、查找、实际衣图从上到下分层，不把照片碎成说明面板 | 不借紫色推广框、社交徽章、头像信息或统计 |
+
+ShopLook、URSTYLE 编辑器均遇 Cloudflare 拦截，未作为证据。Taste `creator` / `list,builder` 实际选 `accent-ladder`，种子 `14112726`；满色仅用于已有照花标记、当前状态和主操作，浅色用在承载选衣的试衣单上。只有两项平级导航，不搬入通用 210–240 px 侧栏。屏幕问题：衣橱「这一套选哪几件？」、试衣间「用哪张人物参考、试哪套、会拍几张？」。视觉取自样衣的白布灰与原照的棚灰；识别件是同一条试衣单从衣橱连续带入试衣间，原照永不显示为成片。
+
+数据清点：站内 6 件样衣（3 上衣、2 下装、1 连衣裙）、0–5 件临时搭配、1 位内置人物、全身／三视图／定妆 3 份既有资产、普通 1 张或棚拍 3 张、预览可下载成片 0 张。沿用 `data/catalog.json` 的目录实体、`public/lib/model-assets.js` 的版本路径和 `public/lib/outfit-rules.js` 的搭配限制。同源新静态原型用原生控件和 URL hash，不引入新工具链，未批准前不改正式 React、接口、图片或订单。
+
+## W13 · 外部实页与 Taste 应用方向（2026-11-27）
+
+从 Obsidian `vault=note`（CLI 实测 `C:\Note\note`）读 `设计参考/README.md` 与 `1011设计参考选取与路由.md`，通过 `search:context` 定向命中 Mobbin、Land-book、Refero；命中不等于案例已验。按具体媒介转到以下公开原站，OpenCLI 截图并目验（本次独立核验，不冒充上游策展登记）：
+
+| 实际案例 | 借给照花 | 不复制 |
+| --- | --- | --- |
+| [MUJI USA · Women's Tops](https://www.muji.us/collections/womens-tops)，[截图](artifacts/shots/w13-ref-muji.png) | 分类与图列分开、结果数紧邻集合、等尺寸图片便于对比；A 保留衣图可扫视性 | 不加促销、价格、购物车或第二层商城导航 |
+| [Are.na · Explore](https://www.are.na/explore)，[截图](artifacts/shots/w13-ref-arena.png) | 列表由媒体而不是组件外框主导；视图控制先于内容，说明留在图像之外；A、C 借筛选与条目分工，B 借深底对媒体退让 | 不为留白把首排衣图压到下半屏，不复制用户投稿 |
+| [Pixieset · Michelle Moore](https://example.pixieset.com/michellemoore/)，[截图](artifacts/shots/w13-ref-pixieset.png) | 影像可先于说明被读到，署名/状态与人物区分；B 移到可操作的全身试衣镜 | 不借满屏营销封面或裁切，不复制摄影作品 |
+
+参考均只用于观察布局、层级与密度；没有核验第三方素材再利用许可证，因此原型不复用其代码、图片、字体或品牌。MUJI 初入旧集合地址返回 404，改从其站内真实分类链接进入；只有最终女装上衣页计入证据。旧照花 W12 本身只作问题基线。
+
+Taste 使用 app-screen、`creator`、`list,builder`，seed `27112026`。图鉴采用 Accent Ladder，以同一松绿阶突出已选和继续动作；镜前采用 True-black Flat，以中性明度分层让照片优先；搭配桌采用 Editorial Greeting 的同线网格和不嵌套的色面，不抄问候语或数据面板。实际对象是 6 件目录样衣、4 个类目视图、当前套装中 0–5 件、同一 R5 原照、两种拍摄方式、四个步骤和空结果；人数、订单、好评和价格不属于这个原型。三版用衣图、原照和共用图标，不增加影像或手造结果。
+
+一次性的方案选型沿用现有同源 `public/design-demos/` 静态入口和原生交互；三版共用目录样例和本页内存，不接生产 API、浏览器持久状态或订单。不添加字体、库或构建流程。正式 React/数据/人物选型在用户选择之前保持不变。
+
+## W12 · 用原始素材做识别
+
+从已批准且实际渲染的 A 工作台与 B 衣橱找问题：相近的浅绿色卡片/按钮框/小标签让一张照片和一条说明读成同级；左侧衣图足够真实，右侧人物和搭配却被拆成两个演示面板。不另找图库或网站；这是原设计迭代，复用 W11 截图、实际衣橱和已有 PoseWear 图，不挪用第三方品牌。Taste 应用轨道对比 Framed Sheet 和 Achromatic Ledger（seed `698924225`）：选择后者的淡化外壳、让内容出色。保留已批准的顶栏/底栏，不移植风格表的 L 框或侧栏。
+
+衣橱回答「哪些衣服能放进这一套」，工作台回答「谁穿这套、下一步做什么」。数据以真实衣图、类目、可见计数、至多五件的搭配、全身原照、拍摄方式、姿势和真实生成状态为准。照花的辨识来自「同一人物照与衣物在图册/相纸中的并置」，及新绘的镜框花瓣，不用假结果或演示数据。
+
+实现选择：复用 React 19.2.7、`frontend/App.jsx`、Studio 及 Wardrobe 的现有状态和原生 dialog；在正式 `public/style*.css` 定义中就地改版，`public/icon.svg` 沿用静态服务和既有 header/favicon 接入。现有静态和 Chromium 测试覆盖入口、持久化与四档布局；只补新品牌和图片交接断言，不添加主题、字体或图标库。
+
+## W11 · 减少用户和服务端的分支
+
+视觉沿用已经确认的 `direction-approved.md`：衣橱挑衣、工作台试拍；不引入第二套主题或状态管理。`frontend/Studio.jsx` 原本已经持有人物、单品、摄影选项与生成状态，`useShoot` 和订单 API 负责真实拍摄；应围绕这些数据呈现进度，不额外复制一个会失步的搭配。此次不需新的外部设计案例（本地参考库 CLI 未连接）。
+
+按 design-reference 核对已批准的 A 工作台、B 衣橱截图，再用 design-taste-frontend 的操作界面检查表区分主画布、编辑区和下一动作。保留浅灰绿和墨绿操作色，人物与衣物实图作为屏幕重点。Huashu 沿用同一项目的已批准方向，采用现有交互预览和正式页复验。
+
+W11 第 2 步复审后，沿用 `App.jsx` 的 hash 路由和 `useStudioDraft` 的会话草稿。商品预填以浏览历史条目为单位消费，路由只记录是否已处理，搭配仍由草稿管理。`Stylist` 收到新推荐时使用 `useShoot` 在空闲时清除上批结果。预览沿用 `public/lib/person.js` 的版本链接。现有 React 19.2.7、浏览器 History API 和 Chromium/真实临时后端足够覆盖这些导航、状态与资源契约，无新依赖。
+
+用 OpenCLI 核实 History API 的 `replaceState` 更新当前历史条目。新增回归覆盖前进后退、主动重选和整页刷新，验证新旧文档只在各自的草稿周期导入。[MDN History.replaceState](https://developer.mozilla.org/en-US/docs/Web/API/History/replaceState)
+
+复审发现 `src/app.mjs` 校验实际生效层，页面只判断连衣裙互斥，两件自动层衬衫会让连拍发送三个无效请求。把已存在的默认层与搭配约束提到同源纯模块，工作台用其指出修正位置，后端仍在建单前执行同一规则。沿用结果页现有 `role="status"` 播报普通试穿阶段，层级原生选择框按现有触控约束增大。通过现有隔离 Chromium 断言不冲突才提交、结果区状态更新和控件可触高度。
+
+旧生产边界在 `src/generation.mjs`、两种专用适配器及设置页探测卡，而衣橱推荐/识图是另一条链。退役要从发现、设置、下单、调度都不可重新选到旧引擎；不能靠隐藏按钮实现。图库档案和历史订单不等于活跃引擎。三视图沿用已锁定 11-26 像素坐标和 `scripts/build-model-front.py`；只更新脸与发的局部，避免重生成腿部或用 3D 校样当照片。
+
+## W10 · 身份母本与棚拍定妆照
+
+R5 沿用 R4b 的脸与妆，只修正发型：图 2 决定黑长直如何自然披下，不用文字规定脸侧落点或露耳。衣物分层提示里的 `tuck` 指上衣下摆，不属于发型指令。
+
+R4b 沿用同一图 2 槽位和哈希登记。冲突在 `src/prompt.mjs` 将发型轮廓交给全身照、`src/studio-contract.mjs` 又锁定图 1 的发际线与分缝；只把全身比例和长发长度留给图 1。略偏分的长侧刘海、脸侧轮廓和妆面随新正脸参考。无需新生成接口、第三张脸图或新依赖。
+
+W9 的 `src/model-identity.mjs` 通过 `public/lib/model-assets.js` 读取 `face-base.jpg`。这张 v3r3 原片能提供身份比对依据，但没有呈现用户想要的新妆面。单靠提示词要求减轻卧蚕、打开眼裂，仍会把旧眼妆作为图像条件。博主参考提供眼线位置、下眼睑明暗和用光的观察依据，人物身份来自自有资产。
+
+W10 复用服务端已有的内置身份图槽位。保留 v3r3 原片，从它制作同人的定妆照 `face-studio-makeup.png`，由同一份资产登记表提供路径和 SHA-256。内置棚拍图 2 同时约束五官和妆面；站姿全身图、服装与骨架保留各自的图号和职责。工作台展示相同文件，服务端按 PNG 类型传输并校验原字节。明确上传的照片独立处理。验收需同时核对发送字节和新成片眼部局部。
+
+实测结论：同模型、同身图、同衣同姿的两张 P015 中，更换图 2 后唇色和下睑明暗的方向与 R2 一致。生成没有固定种子，衣褶和姿态细节仍有随机差异，不能把两张图当严格像素对照或跨姿势保证。见 `progress.md` W10 的原图、局部和实拍记录。
+
+## W9 · 页面与试拍归属
+
+变更前 `public/app.js` 直接调用六个 DOM 视图，`public/lib/dom.js` 创建与替换节点；正式入口未加载 React。沿用已批准的 B 衣橱和 A 工作台、hash 路由，以及现有目录、图片与订单服务。页面使用官方 `react-dom/client` 的 `createRoot` 和 JSX 组件；文档见 https://react.dev/reference/react-dom/client/createRoot 。本机缓存有 React 与 React DOM 19.2.7，现有 esbuild 0.28.2 可将它们编成同源脚本。一次浏览器渲染只需一棵组件树；无需额外路由器或 UI 库。订单价格由服务端决定，测试可用性不能依赖浏览器开关或给用户补余额。保留真实模型的选择、档位和图片输入，与旧订单按原金额恢复的行为。
+
+## W8 · 为什么先修输入，再修形容词
+单张验片选型：工作台的 `submitStudio()` 原本遍历全部三个槽位，服务端 `POST /api/orders` 却本来就按一个姿势建一单，未传档位时 `resolveTier()` 取该模型价格表的第一档。复用同一提交流程、`/api/config` 的模型档位与已有结果卡，只取第一槽的选择；不用新接口、独立验片页或改账户设置。演示免扣试穿余额不等于上游免费。
+
+读图检查不能只看有没有一件有效衣服：已选开衫换图失败、但裙子仍然有效时，用户并没有同意只拍裙子。两种拍摄共用同一提交条件；失败项须重选（有其它条目时也可主动删掉）。人物同理，后选文件无效不是恢复上次人像或内置模特的授权。
+
+检查了 `public/lib/person.js`、`src/app.mjs` 的订单编排、`src/imageapi.mjs` 的 multipart 封装及 `test/api.test.mjs`。旧版只送全身、衣物和姿势；工作台目录里虽有妆后 `face.png`，它并未进入请求。旧版六姿势还共用一次呼气。选型：在已有订单边界加入固定的同人妆前脸，按角色编号；复用已有姿势目录、原生工作台与棚拍用光，不另起 React、3D 人像渲染器或新的图片 API。脸部、身形、姿势、衣物分别验原始字节，成图质量另验。
+
+妆前源文件 `model/model-face-v3r3.jpg` 与 `sources/face-reference-v3/final-face-20261123.jpg` 的哈希相同（`4204794d…`）；`makeup-spec.json` 明确记录 v5a1 从 v3r3 重新做妆，v5a2 再修刘海。并看原片，v3r3 仍有上睫线与唇色，宜称「妆造改版前的身份原片」，而非声称绝对素颜。全身图负责身体与头的外部尺寸；特写不改变头身和身高。
+
+现场核对 [SiCii 的作品第 1、3、5 张](https://www.douyin.com/note/7711767360297962216)、鱿鱼冰冷的[侧脸托颌近景](https://www.douyin.com/note/7712325376441923570)与[正脸近景](https://www.douyin.com/note/7709697279280583603)。只迁移目光相对头向、唇部受力、上睫/眼尾轻重和局部反光；不复制博主五官、手持包或发色。逐张可复核观察和推论在人物库 `docs/prompt-guides/ai-realism-prompt-guide.md`「11-27 装造与表情」。
+
+更早的 v3r2 也有过「较短中庭、较圆眼形」的认可记录，但随后 11-23 的明确最终选择是 v3r3。未将两版混合，亦不把三视图的头部小图说成可证明由某张高清人像生成。对比板（本地非生产素材）：`evidence/w8-identity/identity-comparison.png`，A1 是三视图原像素剪裁，B 是 v3r2，C 是原片，D/E 是后续化妆对照。
+
+## W7 · 分开人物比例、输入画布和输出尺寸
+用户给的 [X 摄影案例](https://x.com/noahvisualsx/status/2125850749276160497) 锁定已有视频首帧；仅迁移「视线与动作有因果、焦点与材质支持同一光位」。原文的手持 9:16、哭泣、金色太阳和极浅景深不用于 2:3 全身棚拍。完整原文与本地视频核对结果见人物资产库 `docs/prompt-guides/ai-realism-prompt-guide.md`。页内说“50mm / f1.4”不等于拍摄 EXIF；本次没有新旧图的盲评。
+
+用户附件、人物资产原图及 `public/model/posewear-01/turnaround.png` 具有同一 SHA-256（`5ec0967b834261a12a7ab428acbedecd98db90d6fa49d0359d1661754f412c80`）。旧 327×1480 是从母图切出的狭窄单栏，不是模特本身的比例。`public/lib/person.js` 把真实图片字节转 data URL；改 CSS 不改变生成输入。保留身份像素，改摄影画布而非横向拉伸；2:3 是输入/棚拍输出契约，不是生成质量保证。三维几何从同一三视图测量，不复用旧 T-pose 代理或改写寝室锁定资产。
+
 ## W6：无影棚三姿势成片（2026-11-25）
 
 参考 Douyin 账号 SiCii 的图文 `7692413820165265856`，证据图已保存为 `evidence/reference-sicii-studio/reference-01.webp` 至 `reference-10.webp`。画面共同点：纯白或暖白无缝背景、全身完整且上下留白充足、平视或略低机位、大面积柔光、极淡鞋底接触影；同一套衣服只改变站姿、插兜、行走和侧身动作。这里借鉴的是拍摄结构与视觉规律，不复制具体人物、构图或服装。

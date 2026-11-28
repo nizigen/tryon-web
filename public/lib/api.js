@@ -18,7 +18,7 @@ export function deviceId() {
   return id;
 }
 
-export async function api(path, { method = 'GET', body } = {}) {
+export async function api(path, { method = 'GET', body, signal } = {}) {
   const headers = {};
   const sessionId = getSessionId();
   if (sessionId) headers['x-session-id'] = sessionId;
@@ -26,6 +26,7 @@ export async function api(path, { method = 'GET', body } = {}) {
   const response = await fetch(path, {
     method,
     headers,
+    signal,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));

@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="穿搭试穿间">
-  <rect width="64" height="64" rx="14" fill="#be471f" />
-  <path d="M22 18h20l6 8-5 4-3-3v21H24V27l-3 3-5-4z" fill="#fff" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="照花">
+  <title>照花</title>
+  <rect width="64" height="64" rx="14" fill="#263b2d" />
+  <rect x="14" y="9" width="36" height="46" rx="18" fill="none" stroke="#f6f4e9" stroke-width="2.8" />
+  <path fill="#f6f4e9" d="M32 19c4.9 0 6.3 5.8 3.8 9.2 3.4-2.5 9.2-1.1 9.2 3.8s-5.8 6.3-9.2 3.8c2.5 3.4 1.1 9.2-3.8 9.2s-6.3-5.8-3.8-9.2C24.8 38.3 19 36.9 19 32s5.8-6.3 9.2-3.8C25.7 24.8 27.1 19 32 19Z" />
+  <circle cx="32" cy="32" r="2.1" fill="#263b2d" />
 </svg>

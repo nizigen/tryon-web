@@ -3,36 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f5f7f4" />
-  <meta name="description" content="把喜欢的衣服收进衣橱，搭一套，再看看穿在身上的样子。" />
-  <title>搭配试穿间 · AI 虚拟试穿</title>
-  <link rel="stylesheet" href="/style.css?v=wardrobe-studio-1" />
-  <link rel="stylesheet" href="/style-wardrobe.css?v=wardrobe-studio-1" />
-  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <meta name="theme-color" content="#f7f7f3" />
+  <meta name="application-name" content="照花" />
+  <meta name="description" content="照花是你的衣橱和试衣间。把衣服搭成一套，用自己的照片或内置模特查看上身效果。" />
+  <title>照花 · 虚拟试衣与衣橱</title>
+  <link rel="stylesheet" href="/style.css?v=zhaohua-2" />
+  <link rel="stylesheet" href="/style-wardrobe.css?v=zhaohua-2" />
+  <link rel="stylesheet" href="/style-home.css" />
+  <link rel="icon" href="/icon.svg?v=zhaohua-1" type="image/svg+xml" />
 </head>
 <body>
-  <a class="skip-link" href="#main">跳到主要内容</a>
-  <div class="app-shell">
-    <header class="sidebar" id="sidebar">
-      <a class="sidebar__brand" href="#/studio" aria-label="搭配试穿间首页">
-        <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6a3 3 0 1 1 4 2.8V11l8 5a2 2 0 0 1-1 4H4a2 2 0 0 1-1-4l9-5" /></svg>
-        <span class="brand__name">搭配试穿间<small>穿之前，先看看</small></span>
-        <span class="demo-badge" id="demo-badge" hidden>演示</span>
-      </a>
-      <nav class="nav" id="nav" aria-label="主导航">
-        <button type="button" class="nav__item" data-route="studio"><span class="nav__label">试穿工作台</span></button>
-        <button type="button" class="nav__item" data-route="wardrobe"><span class="nav__label">我的衣橱</span></button>
-        <button type="button" class="nav__item" data-route="settings"><span class="nav__label">设置</span></button>
-        <button type="button" class="nav__item" data-route="me"><span class="nav__label">试穿记录</span></button>
-      </nav>
-      <div class="sidebar__foot">
-        <div class="balance-box" id="balance-box"><span class="balance-box__label">余额</span><strong class="balance-box__value" id="balance-value">—</strong></div>
-        <p class="sidebar__note">AI 生成效果，仅供搭配参考</p>
-      </div>
-    </header>
-    <main id="main" class="view-root" tabindex="-1"></main>
-  </div>
-  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <script type="module" src="/app.js?v=wardrobe-studio-1"></script>
+  <div id="app"></div>
+  <noscript>请开启 JavaScript 以打开照花。</noscript>
+  <script type="module" src="/dist/app.js"></script>
 </body>
 </html>

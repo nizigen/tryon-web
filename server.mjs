@@ -22,9 +22,8 @@ export async function bootstrap(env = process.env, { fetchImpl = fetch } = {}) {
     fetchImpl,
     resultsDir: resolve(ROOT, 'data/results'),
   });
-  // 进程重启后内存任务丢失，磁盘上仍是 pending 的订单必须退回余额。
   const interrupted = await tryon.reconcileInterruptedOrders();
-  if (interrupted > 0) console.error(`reconciled ${interrupted} interrupted order(s), balance refunded`);
+  if (interrupted > 0) console.error(`reconciled ${interrupted} interrupted order(s)`);
   const sources = createSourceService({ env, fetchImpl, dataDir });
   const wardrobe = createWardrobe({ dir: dataDir, env, fetchImpl, captioner: createCaptioner({ env, fetchImpl }), sources });
   const stylist = createStylist({ env, fetchImpl, wardrobe });

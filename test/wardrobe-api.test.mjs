@@ -214,7 +214,7 @@ test('衣橱单品可直接下单试穿', async () => {
     });
     assert.equal(order.status, 201);
     assert.deepEqual(order.payload.order.slots, ['top']);
-    assert.equal(order.payload.order.priceCents, 690);
+    assert.equal(order.payload.order.priceCents, 0);
   });
 });
 

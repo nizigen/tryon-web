@@ -1,0 +1,93 @@
+body[data-direction="b"] {
+  color-scheme: dark;
+  --ground: #080808;
+  --paper: #151515;
+  --sink: #222222;
+  --ink: #f1f1ef;
+  --muted: #b6b6b2;
+  --rule: #363636;
+  --edge: #808080;
+  --accent: #e6e6e4;
+  --soft: #292929;
+  --button: #ebebe7;
+  --button-ink: #171717;
+  --measure: 1320px;
+  --radius: 3px;
+}
+
+[data-direction="b"] .bar { background: var(--ground); }
+[data-direction="b"] .switcher button[aria-current] { background: transparent; text-decoration: underline; text-underline-offset: 8px; }
+[data-direction="b"] .page { margin-top: clamp(19px, 2.2vw, 36px); }
+[data-direction="b"] .page-head { border: 0; margin-bottom: 16px; padding: 0; }
+[data-direction="b"] .page-head h1 { font-size: clamp(24px, 2vw, 30px); }
+[data-direction="b"] :is(.wardrobe-layout, .studio-layout) {
+  display: grid;
+  grid-template-columns: minmax(0, 1.42fr) minmax(0, 1fr);
+  gap: clamp(22px, 3.2vw, 52px);
+  align-items: start;
+}
+[data-direction="b"] .portrait { position: sticky; top: 16px; }
+[data-direction="b"] .portrait-frame {
+  height: clamp(350px, 72svh, 770px);
+  padding: clamp(8px, 1.1vw, 16px);
+  background: var(--paper);
+  border-radius: 0;
+}
+[data-direction="b"] .portrait-frame img { object-fit: contain; }
+[data-direction="b"] .portrait figcaption { padding-block: 10px; }
+[data-direction="b"] .portrait figcaption > :first-child { color: var(--ink); font-weight: 550; }
+[data-direction="b"] .mirror-tools { display: grid; min-width: 0; gap: clamp(24px, 2.4vw, 36px); }
+[data-direction="b"] .outfit {
+  display: grid;
+  grid-template: "title action" auto "items items" auto / minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 10px;
+  padding: 14px 18px 16px;
+  background: var(--paper);
+}
+[data-direction="b"] .outfit-heading { grid-area: title; flex-wrap: wrap; }
+[data-direction="b"] .outfit-actions { grid-area: action; }
+[data-direction="b"] .outfit .button--primary { min-width: 88px; border-radius: 22px; }
+[data-direction="b"] :is(.outfit-items, .outfit-empty) { grid-area: items; }
+[data-direction="b"] .outfit-items { grid-template-columns: repeat(auto-fit, minmax(min(100%, 175px), 1fr)); gap: 6px 14px; }
+[data-direction="b"] .outfit-item img { width: 42px; height: 48px; }
+[data-direction="b"] .outfit-meta { font-size: 13px; }
+[data-direction="b"] .closet-controls { display: grid; gap: 8px; }
+[data-direction="b"] .facets button { padding-inline: 12px; }
+[data-direction="b"] .facets button[aria-pressed="true"] { background: var(--soft); }
+[data-direction="b"] .garment-grid {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(116px, 30%, 165px);
+  gap: 12px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: inline proximity;
+  scrollbar-color: var(--edge) var(--paper);
+  padding: 5px 5px 12px;
+}
+[data-direction="b"] .garment { scroll-snap-align: start; }
+[data-direction="b"] .garment-choice { border: 0; padding: 0; }
+[data-direction="b"] .garment-image { aspect-ratio: 4 / 5; border-radius: 2px; }
+[data-direction="b"] .garment-name { font-size: 14px; }
+[data-direction="b"] .garment-caption { font-size: 12px; }
+[data-direction="b"] .mark { width: 25px; height: 25px; }
+[data-direction="b"] .mark svg { width: 16px; height: 16px; }
+[data-direction="b"] .studio-layout .portrait-frame { height: clamp(300px, 64svh, 670px); }
+[data-direction="b"] .inspector { padding: clamp(16px, 2vw, 28px); background: var(--paper); border: 0; }
+[data-direction="b"] .steps button[aria-current] { color: var(--ink); border-color: var(--ink); }
+[data-direction="b"] .preview-note nav a { min-width: 44px; }
+
+@media (max-width: 760px) {
+  [data-direction="b"] :is(.wardrobe-layout, .studio-layout) { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  [data-direction="b"] .portrait { position: static; }
+  [data-direction="b"] .portrait-frame { height: clamp(190px, 34svh, 320px); padding: 6px; }
+  [data-direction="b"] .studio-layout .portrait-frame { height: clamp(200px, 35svh, 320px); }
+  [data-direction="b"] .portrait figcaption { padding-block: 6px; }
+  [data-direction="b"] .mirror-tools { gap: 20px; }
+  [data-direction="b"] .outfit { padding: 10px 12px 12px; gap: 8px; }
+  [data-direction="b"] .outfit-items { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; }
+  [data-direction="b"] .outfit-item { gap: 4px; }
+  [data-direction="b"] .outfit-item img { width: 34px; height: 44px; }
+  [data-direction="b"] .garment-grid { grid-auto-columns: clamp(109px, 35%, 155px); gap: 10px; }
+}
